@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QPixmap
 from PySide6.QtWidgets import (
     QFileDialog,
     QDockWidget,
@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QLabel,
 )
 
+from app.app_state import AppState
 from app.config import APP_NAME, APP_VERSION
 from app.constants import (
     WINDOW_WIDTH,
@@ -29,7 +30,7 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.logger = setup_logger()
-        self.current_image_path: str | None = None
+        self.app_state = AppState()
 
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
@@ -53,6 +54,7 @@ class MainWindow(QMainWindow):
         self._create_actions()
         self._create_menu()
         self._create_status_bar()
+        self._update_action_states()
 
         self.image_viewer.image_dropped.connect(self.load_image)
         self.image_viewer.zoom_changed.connect(self._update_zoom_label)
@@ -66,12 +68,22 @@ class MainWindow(QMainWindow):
         self.open_action.triggered.connect(self.open_image_dialog)
 
         self.save_as_action = QAction("Save As", self)
+        self.save_as_action.triggered.connect(self.save_image_as)
+
+        self.clear_image_action = QAction("Clear Image", self)
+        self.clear_image_action.triggered.connect(self.clear_image)
 
         self.exit_action = QAction("Exit", self)
         self.exit_action.triggered.connect(self.close)
 
         self.undo_action = QAction("Undo", self)
+        self.undo_action.triggered.connect(self.undo)
+
         self.redo_action = QAction("Redo", self)
+        self.redo_action.triggered.connect(self.redo)
+
+        self.reset_image_action = QAction("Reset to Original", self)
+        self.reset_image_action.triggered.connect(self.reset_image)
 
         self.zoom_in_action = QAction("Zoom In", self)
         self.zoom_in_action.triggered.connect(self.image_viewer.zoom_in)
@@ -84,9 +96,6 @@ class MainWindow(QMainWindow):
 
         self.reset_zoom_action = QAction("Reset Zoom", self)
         self.reset_zoom_action.triggered.connect(self.image_viewer.reset_zoom)
-
-        self.clear_image_action = QAction("Clear Image", self)
-        self.clear_image_action.triggered.connect(self.image_viewer.clear_image)
 
         self.about_action = QAction("About", self)
         self.about_action.triggered.connect(self.show_about_dialog)
@@ -104,6 +113,7 @@ class MainWindow(QMainWindow):
         edit_menu = menu_bar.addMenu("Edit")
         edit_menu.addAction(self.undo_action)
         edit_menu.addAction(self.redo_action)
+        edit_menu.addAction(self.reset_image_action)
 
         view_menu = menu_bar.addMenu("View")
         view_menu.addAction(self.zoom_in_action)
@@ -120,6 +130,21 @@ class MainWindow(QMainWindow):
 
         self.statusBar().addPermanentWidget(self.image_info_label)
         self.statusBar().addPermanentWidget(self.zoom_label)
+
+    def _update_action_states(self) -> None:
+        has_image = self.app_state.has_image()
+
+        self.save_as_action.setEnabled(has_image)
+        self.clear_image_action.setEnabled(has_image)
+        self.reset_image_action.setEnabled(has_image)
+
+        self.undo_action.setEnabled(self.app_state.can_undo())
+        self.redo_action.setEnabled(self.app_state.can_redo())
+
+        self.zoom_in_action.setEnabled(has_image)
+        self.zoom_out_action.setEnabled(has_image)
+        self.fit_to_window_action.setEnabled(has_image)
+        self.reset_zoom_action.setEnabled(has_image)
 
     def open_image_dialog(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
@@ -153,26 +178,124 @@ class MainWindow(QMainWindow):
             self.logger.error("Failed to load image: %s", file_path)
             return
 
-        self.image_viewer.set_image(pixmap)
-        self.current_image_path = file_path
+        self.app_state.set_image(pixmap, file_path)
+        self._display_current_image()
 
         file_name = Path(file_path).name
         self.statusBar().showMessage(f"Loaded: {file_name}", 3000)
         self.logger.info("Loaded image: %s", file_path)
+
+    def _display_current_image(self) -> None:
+        pixmap = self.app_state.get_display_pixmap()
+        if pixmap is None or pixmap.isNull():
+            self.image_viewer.clear_image()
+        else:
+            self.image_viewer.set_image(pixmap)
+
+        self._update_action_states()
+
+    def clear_image(self) -> None:
+        self.app_state.clear()
+        self.image_viewer.clear_image()
+        self._update_action_states()
+        self.logger.info("Cleared image")
+
+    def save_image_as(self) -> None:
+        if not self.app_state.has_image():
+            return
+
+        file_path, selected_filter = QFileDialog.getSaveFileName(
+            self,
+            "Save Image As",
+            "",
+            "PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;BMP Image (*.bmp)",
+        )
+
+        if not file_path:
+            return
+
+        pixmap = self.app_state.current_pixmap
+        if pixmap is None or pixmap.isNull():
+            QMessageBox.warning(self, "No Image", "There is no image to save.")
+            return
+
+        success = pixmap.save(file_path)
+        if not success:
+            QMessageBox.critical(self, "Save Error", "Failed to save image.")
+            self.logger.error("Failed to save image: %s", file_path)
+            return
+
+        file_name = Path(file_path).name
+        self.statusBar().showMessage(f"Saved: {file_name}", 3000)
+        self.logger.info("Saved image: %s", file_path)
+
+    def undo(self) -> None:
+        pixmap = self.app_state.undo()
+        if pixmap is None:
+            return
+
+        self.image_viewer.set_image(pixmap)
+        self._update_action_states()
+        self.statusBar().showMessage("Undo", 2000)
+        self.logger.info("Undo action")
+
+    def redo(self) -> None:
+        pixmap = self.app_state.redo()
+        if pixmap is None:
+            return
+
+        self.image_viewer.set_image(pixmap)
+        self._update_action_states()
+        self.statusBar().showMessage("Redo", 2000)
+        self.logger.info("Redo action")
+
+    def reset_image(self) -> None:
+        pixmap = self.app_state.reset_to_original()
+        if pixmap is None:
+            return
+
+        self.image_viewer.set_image(pixmap)
+        self._update_action_states()
+        self.statusBar().showMessage("Reset to original", 2000)
+        self.logger.info("Reset image to original")
+
+    def apply_demo_change(self) -> None:
+        """
+        Temporary helper for testing history before EPIC 4/5.
+        Creates a scaled copy to prove undo/redo works.
+        """
+        if not self.app_state.has_image():
+            return
+
+        current = self.app_state.current_pixmap
+        if current is None or current.isNull():
+            return
+
+        new_pixmap = current.scaled(
+            max(1, current.width() - 50),
+            max(1, current.height() - 50),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+
+        self.app_state.apply_new_current(new_pixmap)
+        self.image_viewer.set_image(new_pixmap)
+        self._update_action_states()
+        self.statusBar().showMessage("Applied demo change", 2000)
+        self.logger.info("Applied demo change")
 
     def _update_zoom_label(self, zoom_factor: float) -> None:
         percent = round(zoom_factor * 100)
         self.zoom_label.setText(f"Zoom: {percent}%")
 
     def _update_image_info(self, width: int, height: int) -> None:
-        if self.current_image_path:
-            file_name = Path(self.current_image_path).name
+        if self.app_state.current_image_path:
+            file_name = Path(self.app_state.current_image_path).name
             self.image_info_label.setText(f"{file_name} | {width}×{height}")
         else:
             self.image_info_label.setText(f"{width}×{height}")
 
     def _clear_image_info(self) -> None:
-        self.current_image_path = None
         self.image_info_label.setText("No image")
         self.zoom_label.setText("Zoom: 100%")
         self.statusBar().showMessage("Image cleared", 3000)
