@@ -60,6 +60,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.zoom_changed.connect(self._update_zoom_label)
         self.image_viewer.image_loaded.connect(self._update_image_info)
         self.image_viewer.image_cleared.connect(self._clear_image_info)
+        self.sidebar.module_selected.connect(self.on_module_selected)
 
         self.statusBar().showMessage("Ready")
 
@@ -306,3 +307,8 @@ class MainWindow(QMainWindow):
             "About",
             f"{APP_NAME}\nVersion {APP_VERSION}",
         )
+    
+    def on_module_selected(self, module_name: str) -> None:
+        self.control_panel.show_module(module_name)
+        self.statusBar().showMessage(f"Selected module: {module_name}", 2000)
+        self.logger.info("Selected module: %s", module_name)
