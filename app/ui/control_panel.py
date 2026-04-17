@@ -37,6 +37,10 @@ class ControlPanel(QWidget):
     gif_generate_requested = Signal(str, int, float, int, int, int)
     gif_save_requested = Signal()
 
+    style_preset_requested = Signal(str, int)
+    style_custom_image_requested = Signal()
+    style_custom_requested = Signal(int)
+
     def __init__(self) -> None:
         super().__init__()
 
@@ -70,9 +74,7 @@ class ControlPanel(QWidget):
 
         self.gif_page = self._build_gif_page()
 
-        self.style_transfer_page = self._build_placeholder_page(
-            "Style Transfer tools will appear here.\nYou will choose a second image as the style source."
-        )
+        self.style_transfer_page = self._build_style_transfer_page()
         self.generative_ai_page = self._build_placeholder_page(
             "Generative AI tools will appear here.\nYou will enter a prompt and generate an image."
         )
@@ -738,3 +740,139 @@ class ControlPanel(QWidget):
     def set_gif_ready(self, ready: bool, message: str) -> None:
         self.gif_save_button.setEnabled(ready)
         self.gif_status_label.setText(message)
+    
+    def _build_style_transfer_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+
+        self.style_transfer_tool_list = QListWidget()
+        self.style_transfer_tool_list.addItems([
+            "Preset Styles",
+            "Custom Style",
+        ])
+
+        self.style_transfer_stack = QStackedWidget()
+
+        # Preset page
+        preset_page = QWidget()
+        preset_layout = QVBoxLayout()
+
+        preset_description = QLabel(
+            "Choose a predefined style and apply it to the current image."
+        )
+        preset_description.setWordWrap(True)
+
+        preset_form = QFormLayout()
+
+        self.style_preset_combo = QComboBox()
+        self.style_preset_combo.addItems([
+            "Van Gogh",
+            "Mosaic",
+            "Candy",
+            "Udnie",
+            "Sketch",
+        ])
+
+        self.style_preset_strength_slider = QSlider(Qt.Orientation.Horizontal)
+        self.style_preset_strength_slider.setRange(0, 100)
+        self.style_preset_strength_slider.setValue(50)
+
+        self.style_preset_strength_label = QLabel("50")
+        self.style_preset_strength_slider.valueChanged.connect(
+            lambda value: self.style_preset_strength_label.setText(str(value))
+        )
+
+        strength_row = QHBoxLayout()
+        strength_row.addWidget(self.style_preset_strength_slider)
+        strength_row.addWidget(self.style_preset_strength_label)
+
+        preset_form.addRow("Preset", self.style_preset_combo)
+        preset_form.addRow("Style Strength", strength_row)
+
+        self.style_preset_apply_button = QPushButton("Apply Preset Style")
+        self.style_preset_apply_button.clicked.connect(self._emit_style_preset_requested)
+
+        preset_layout.addWidget(preset_description)
+        preset_layout.addLayout(preset_form)
+        preset_layout.addWidget(self.style_preset_apply_button)
+        preset_layout.addStretch()
+        preset_page.setLayout(preset_layout)
+
+        # Custom page
+        custom_page = QWidget()
+        custom_layout = QVBoxLayout()
+
+        custom_description = QLabel(
+            "Load another image and use it as the style source for the current image."
+        )
+        custom_description.setWordWrap(True)
+
+        self.style_custom_path_label = QLabel("No style image selected")
+        self.style_custom_path_label.setWordWrap(True)
+
+        self.style_custom_load_button = QPushButton("Load Style Image")
+        self.style_custom_load_button.clicked.connect(self.style_custom_image_requested.emit)
+
+        custom_form = QFormLayout()
+
+        self.style_custom_strength_slider = QSlider(Qt.Orientation.Horizontal)
+        self.style_custom_strength_slider.setRange(0, 100)
+        self.style_custom_strength_slider.setValue(50)
+
+        self.style_custom_strength_label = QLabel("50")
+        self.style_custom_strength_slider.valueChanged.connect(
+            lambda value: self.style_custom_strength_label.setText(str(value))
+        )
+
+        custom_strength_row = QHBoxLayout()
+        custom_strength_row.addWidget(self.style_custom_strength_slider)
+        custom_strength_row.addWidget(self.style_custom_strength_label)
+
+        custom_form.addRow("Style Strength", custom_strength_row)
+
+        self.style_custom_apply_button = QPushButton("Apply Custom Style")
+        self.style_custom_apply_button.clicked.connect(self._emit_style_custom_requested)
+        self.style_custom_apply_button.setEnabled(False)
+
+        custom_layout.addWidget(custom_description)
+        custom_layout.addWidget(self.style_custom_load_button)
+        custom_layout.addWidget(self.style_custom_path_label)
+        custom_layout.addLayout(custom_form)
+        custom_layout.addWidget(self.style_custom_apply_button)
+        custom_layout.addStretch()
+        custom_page.setLayout(custom_layout)
+
+        self.style_transfer_stack.addWidget(preset_page)
+        self.style_transfer_stack.addWidget(custom_page)
+
+        self.style_transfer_tool_list.currentRowChanged.connect(
+            self.style_transfer_stack.setCurrentIndex
+        )
+        self.style_transfer_tool_list.setCurrentRow(0)
+
+        layout.addWidget(self.style_transfer_tool_list)
+        layout.addWidget(self.style_transfer_stack)
+        page.setLayout(layout)
+
+        return page
+    
+    def _emit_style_preset_requested(self) -> None:
+        self.style_preset_requested.emit(
+            self.style_preset_combo.currentText(),
+            self.style_preset_strength_slider.value(),
+        )
+
+
+    def _emit_style_custom_requested(self) -> None:
+        self.style_custom_requested.emit(
+            self.style_custom_strength_slider.value(),
+        )
+
+
+    def set_style_custom_image_path(self, path: str | None) -> None:
+        if path:
+            self.style_custom_path_label.setText(path)
+            self.style_custom_apply_button.setEnabled(True)
+        else:
+            self.style_custom_path_label.setText("No style image selected")
+            self.style_custom_apply_button.setEnabled(False)

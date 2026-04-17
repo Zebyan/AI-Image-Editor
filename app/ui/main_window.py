@@ -33,6 +33,7 @@ from app.services.image_io import is_supported_image, load_pixmap
 from app.ui.control_panel import ControlPanel
 from app.ui.image_viewer import ImageViewer
 from app.ui.sidebar import Sidebar
+from app.process.style_transfer.preset_style import apply_preset_style
 
 
 class MainWindow(QMainWindow):
@@ -45,6 +46,8 @@ class MainWindow(QMainWindow):
         self._generated_gif_frames = []
         self._generated_gif_duration_ms = 120
         
+        self._style_custom_image_path: str | None = None
+        self._style_custom_pixmap = None
 
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
@@ -98,6 +101,10 @@ class MainWindow(QMainWindow):
         self.control_panel.draw_brush_changed.connect(self.update_draw_brush)
         self.control_panel.draw_apply_requested.connect(self.apply_drawing)
         self.control_panel.draw_cancel_requested.connect(self.cancel_drawing)
+
+        self.control_panel.style_preset_requested.connect(self.apply_style_preset_ui)
+        self.control_panel.style_custom_image_requested.connect(self.load_style_custom_image)
+        self.control_panel.style_custom_requested.connect(self.apply_style_custom_ui)
 
         self.control_panel.tool_list.currentTextChanged.connect(
             lambda _: self._sync_interaction_modes()
@@ -718,3 +725,112 @@ class MainWindow(QMainWindow):
         file_name = Path(file_path).name
         self.statusBar().showMessage(f"Saved GIF: {file_name}", 3000)
         self.logger.info("Saved GIF: %s", file_path)
+
+    def load_style_custom_image(self) -> None:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Load Style Image",
+            "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp)",
+        )
+
+        if not file_path:
+            return
+
+        if not is_supported_image(file_path):
+            QMessageBox.warning(
+                self,
+                "Unsupported File",
+                "That file type is not supported.",
+            )
+            return
+
+        pixmap = load_pixmap(file_path)
+        if pixmap.isNull():
+            QMessageBox.critical(
+                self,
+                "Load Error",
+                "Failed to load style image.",
+            )
+            self.logger.error("Failed to load style image: %s", file_path)
+            return
+
+        self._style_custom_image_path = file_path
+        self._style_custom_pixmap = pixmap
+        self.control_panel.set_style_custom_image_path(file_path)
+
+        self.statusBar().showMessage("Loaded custom style image", 3000)
+        self.logger.info("Loaded custom style image: %s", file_path)
+
+
+    def apply_style_preset_ui(self, preset_name: str, strength: int) -> None:
+        if not self.app_state.has_image():
+            QMessageBox.warning(self, "No Image", "Load a content image first.")
+            return
+
+        current = self.app_state.current_pixmap
+        if current is None or current.isNull():
+            return
+
+        try:
+            styled = apply_preset_style(current, preset_name, strength)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Style Transfer Error",
+                f"Failed to apply preset style.\n{exc}",
+            )
+            self.logger.error("Preset style transfer failed: %s", exc)
+            return
+
+        if styled.isNull():
+            QMessageBox.warning(self, "Style Transfer Failed", "Failed to create stylized image.")
+            return
+
+        self.app_state.apply_new_current(styled)
+        self.image_viewer.set_image(styled)
+        self.control_panel.set_resize_source_dimensions(styled.width(), styled.height())
+        self._update_action_states()
+        self._sync_interaction_modes()
+
+        self.statusBar().showMessage(
+            f"Applied preset style: {preset_name} (strength={strength})",
+            3000,
+        )
+        self.logger.info(
+            "Applied preset style: preset=%s strength=%s",
+            preset_name,
+            strength,
+        )
+
+    def apply_style_custom_ui(self, strength: int) -> None:
+        if not self.app_state.has_image():
+            QMessageBox.warning(self, "No Image", "Load a content image first.")
+            return
+
+        if self._style_custom_pixmap is None or self._style_custom_pixmap.isNull():
+            QMessageBox.warning(
+                self,
+                "No Style Image",
+                "Load a custom style image first.",
+            )
+            return
+
+        QMessageBox.information(
+            self,
+            "Custom Style Transfer",
+            (
+                f"Custom style image loaded.\n"
+                f"Strength: {strength}\n\n"
+                "UI-ul este gata. Următorul pas este implementarea procesării reale."
+            ),
+        )
+        self.statusBar().showMessage(
+            f"Custom style requested (strength={strength})",
+            3000,
+        )
+        self.logger.info(
+            "Custom style UI request: style_path=%s strength=%s",
+            self._style_custom_image_path,
+            strength,
+        )
