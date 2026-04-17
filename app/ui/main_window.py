@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+import numpy as np
+from PySide6.QtCore import Qt, QThread
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -23,25 +26,26 @@ from app.process.edit.blur import apply_gaussian_blur
 from app.process.edit.brightness_contrast import (
     adjust_brightness_contrast,
 )
-from app.ui.gif_window import GifPreviewDialog
-from app.process.gif.gif import generate_gif_frames, save_gif
 from app.process.edit.crop import crop_pixmap
 from app.process.edit.flip import flip_pixmap
 from app.process.edit.resize import resize_pixmap
 from app.process.edit.rotate import rotate_pixmap
-from app.services.image_io import is_supported_image, load_pixmap
-from app.ui.control_panel import ControlPanel
-from app.ui.image_viewer import ImageViewer
-from app.ui.sidebar import Sidebar
-from app.process.style_transfer.preset_style import apply_preset_style
-import numpy as np
-from PySide6.QtCore import Qt, QThread
-from app.ui.loading_dialog import LoadingDialog
-from app.workers.task_worker import TaskWorker
-from app.utils.convert import qpixmap_to_numpy, numpy_to_qpixmap
 from app.process.gif.gif import generate_gif_frames_from_array, save_gif
 from app.process.style_transfer.preset_style import apply_preset_style_array
+from app.process.generative_ai.text_to_image import (
+    generate_image_from_text,
+    preload_pipeline,
+)
+from app.ui.image_preview_dialog import ImagePreviewDialog
+from app.services.image_io import is_supported_image, load_pixmap
+from app.ui.control_panel import ControlPanel
 from app.ui.gif_window import GifPreviewDialog
+from app.ui.image_viewer import ImageViewer
+from app.ui.loading_dialog import LoadingDialog
+from app.ui.sidebar import Sidebar
+from app.utils.convert import qpixmap_to_numpy, numpy_to_qpixmap
+from app.workers.task_worker import TaskWorker
+
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
@@ -51,10 +55,17 @@ class MainWindow(QMainWindow):
         self.app_state = AppState()
 
         self._generated_gif_frames = []
-        self._generated_gif_duration_ms = 120
-        
+        self._generated_gif_duration_ms = 80
+
         self._style_custom_image_path: str | None = None
         self._style_custom_pixmap = None
+        self._generative_ai_ready = False
+
+        self.loading_dialog = LoadingDialog(parent=self)
+        self._worker_thread: QThread | None = None
+        self._worker: TaskWorker | None = None
+        self._task_running = False
+        self._worker_success_callback = None
 
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
@@ -70,8 +81,6 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.sidebar_dock)
 
         self.control_panel = ControlPanel()
-        self.control_panel.gif_generate_requested.connect(self.generate_gif)
-        self.control_panel.gif_save_requested.connect(self.save_generated_gif)
         self.control_dock = QDockWidget("Controls", self)
         self.control_dock.setWidget(self.control_panel)
         self.control_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
@@ -94,6 +103,7 @@ class MainWindow(QMainWindow):
         )
 
         self.sidebar.module_selected.connect(self.on_module_selected)
+
         self.control_panel.resize_requested.connect(self.apply_resize)
         self.control_panel.rotate_requested.connect(self.apply_rotate)
         self.control_panel.flip_requested.connect(self.apply_flip)
@@ -109,24 +119,14 @@ class MainWindow(QMainWindow):
         self.control_panel.draw_apply_requested.connect(self.apply_drawing)
         self.control_panel.draw_cancel_requested.connect(self.cancel_drawing)
 
-        self.control_panel.style_preset_requested.connect(self.apply_style_preset_ui)
-        self.control_panel.style_custom_image_requested.connect(self.load_style_custom_image)
-        self.control_panel.style_custom_requested.connect(self.apply_style_custom_ui)
-
-        self.loading_dialog = LoadingDialog(parent=self)
-        self._worker_thread: QThread | None = None
-        self._worker: TaskWorker | None = None
-        self._generated_gif_frames = []
-        self._generated_gif_duration_ms = 80
-        self._style_custom_image_path: str | None = None
-        self._style_custom_pixmap = None
-
         self.control_panel.gif_generate_requested.connect(self.generate_gif)
         self.control_panel.gif_save_requested.connect(self.save_generated_gif)
 
         self.control_panel.style_preset_requested.connect(self.apply_style_preset_ui)
         self.control_panel.style_custom_image_requested.connect(self.load_style_custom_image)
         self.control_panel.style_custom_requested.connect(self.apply_style_custom_ui)
+
+        self.control_panel.text_to_image_requested.connect(self.generate_text_to_image_ui)
 
         self.control_panel.tool_list.currentTextChanged.connect(
             lambda _: self._sync_interaction_modes()
@@ -601,63 +601,92 @@ class MainWindow(QMainWindow):
         self.control_panel.set_crop_selection_info(False)
         self._sync_interaction_modes()
 
-    def on_module_selected(self, module_name: str) -> None:
-        self.control_panel.show_module(module_name)
-        self._sync_interaction_modes()
-        self.statusBar().showMessage(f"Selected module: {module_name}", 2000)
-        self.logger.info("Selected module: %s", module_name)
+    def show_loading(self, message: str) -> None:
+        self.loading_dialog.set_message(message)
+        self.loading_dialog.setModal(False)
+        self.loading_dialog.show()
+        self.loading_dialog.raise_()
+        self.loading_dialog.activateWindow()
 
-    def _sync_interaction_modes(self) -> None:
-        current_tool = self.control_panel.current_tool_name()
-        is_edit = self.control_panel.current_module == "Edit"
-        has_image = self.app_state.has_image()
+    def hide_loading(self) -> None:
+        self.loading_dialog.hide()
 
-        enable_crop = is_edit and current_tool == "Crop" and has_image
-        enable_draw = (
-            is_edit
-            and current_tool == "Draw"
-            and has_image
-            and self.control_panel.draw_toggle_button.isChecked()
+    def run_in_background(
+        self,
+        fn,
+        on_success,
+        loading_message: str,
+        *args,
+        **kwargs,
+    ) -> None:
+        if self._task_running:
+            QMessageBox.warning(self, "Busy", "Another task is already running.")
+            return
+
+        self._task_running = True
+        self.show_loading(loading_message)
+
+        if hasattr(self.control_panel, "gif_generate_button"):
+            self.control_panel.gif_generate_button.setEnabled(False)
+        if hasattr(self.control_panel, "style_preset_apply_button"):
+            self.control_panel.style_preset_apply_button.setEnabled(False)
+
+        self._worker_thread = QThread(self)
+        self._worker = TaskWorker(fn, *args, **kwargs)
+        self._worker.moveToThread(self._worker_thread)
+
+        self._worker_thread.started.connect(self._worker.run)
+
+        self._worker_success_callback = on_success
+        self._worker.finished.connect(
+            self._handle_worker_success,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self._worker.error.connect(
+            self._handle_worker_error,
+            Qt.ConnectionType.QueuedConnection,
         )
 
-        if enable_draw:
-            self.image_viewer.set_crop_mode(False)
-            self.image_viewer.set_draw_mode(True)
-            self.update_draw_brush(
-                self.control_panel.draw_size_slider.value(),
-                self.control_panel._draw_color,
-            )
-        else:
-            self.image_viewer.set_draw_mode(False)
+        self._worker.error.connect(self._worker_thread.quit)
 
-        if enable_crop:
-            self.image_viewer.set_crop_mode(True)
-        else:
-            self.image_viewer.set_crop_mode(False)
+        self._worker.finished.connect(self._worker.deleteLater)
+        self._worker.error.connect(self._worker.deleteLater)
 
-    def _update_zoom_label(self, zoom_factor: float) -> None:
-        percent = round(zoom_factor * 100)
-        self.zoom_label.setText(f"Zoom: {percent}%")
+        self._worker_thread.finished.connect(self._cleanup_worker_thread)
+        self._worker_thread.start()
 
-    def _update_image_info(self, width: int, height: int) -> None:
-        if self.app_state.current_image_path:
-            file_name = Path(self.app_state.current_image_path).name
-            self.image_info_label.setText(f"{file_name} | {width}×{height}")
-        else:
-            self.image_info_label.setText(f"{width}×{height}")
+    def _handle_worker_success(self, result) -> None:
+        self.hide_loading()
+        if self._worker_thread is not None:
+            self._worker_thread.quit()
 
-    def _clear_image_info(self) -> None:
-        self.image_info_label.setText("No image")
-        self.zoom_label.setText("Zoom: 100%")
-        self.statusBar().showMessage("Image cleared", 3000)
+        if self._worker_success_callback is not None:
+            self._worker_success_callback(result)
+            self._worker_success_callback = None
 
-    def show_about_dialog(self) -> None:
-        QMessageBox.about(
-            self,
-            "About",
-            f"{APP_NAME}\nVersion {APP_VERSION}",
-        )
-    
+    def _handle_worker_error(self, message: str) -> None:
+        self.hide_loading()
+        QMessageBox.critical(self, "Processing Error", message)
+        self.logger.error("Background task failed: %s", message)
+
+    def _cleanup_worker_thread(self) -> None:
+        if self._worker_thread is not None:
+            # Wait for thread to finish if it's still running
+            if self._worker_thread.isRunning():
+                self._worker_thread.wait(3000)  # Wait up to 3 seconds
+            
+            self._worker_thread.deleteLater()
+
+        # Don't delete worker here, it's already scheduled for deletion via deleteLater
+        self._worker_thread = None
+        self._worker = None
+        self._task_running = False
+
+        if hasattr(self.control_panel, "gif_generate_button"):
+            self.control_panel.gif_generate_button.setEnabled(True)
+        if hasattr(self.control_panel, "style_preset_apply_button"):
+            self.control_panel.style_preset_apply_button.setEnabled(True)
+
     def generate_gif(
         self,
         effect: str,
@@ -676,7 +705,6 @@ class MainWindow(QMainWindow):
             return
 
         image_array = qpixmap_to_numpy(current)
-
         self._generated_gif_duration_ms = duration_ms
 
         self.run_in_background(
@@ -729,10 +757,6 @@ class MainWindow(QMainWindow):
             parent=self,
         )
         preview.exec()
-
-    def set_gif_ready(self, ready: bool, message: str) -> None:
-        self.gif_save_button.setEnabled(ready)
-        self.gif_status_label.setText(message)
 
     def save_generated_gif(self) -> None:
         if not self._generated_gif_frames:
@@ -796,7 +820,6 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Loaded custom style image", 3000)
         self.logger.info("Loaded custom style image: %s", file_path)
 
-
     def apply_style_preset_ui(self, preset_name: str, strength: int) -> None:
         if not self.app_state.has_image():
             QMessageBox.warning(self, "No Image", "Load a content image first.")
@@ -859,7 +882,7 @@ class MainWindow(QMainWindow):
             (
                 f"Custom style image loaded.\n"
                 f"Strength: {strength}\n\n"
-                "UI-ul este gata. Următorul pas este implementarea procesării reale."
+                "Custom style processing is not implemented yet."
             ),
         )
         self.statusBar().showMessage(
@@ -872,60 +895,133 @@ class MainWindow(QMainWindow):
             strength,
         )
 
-    def show_loading(self, message: str) -> None:
-        self.loading_dialog.set_message(message)
-        self.loading_dialog.show()
-        self.loading_dialog.raise_()
-        self.loading_dialog.activateWindow()
-
-
-    def hide_loading(self) -> None:
-        self.loading_dialog.hide()
-
-
-    def run_in_background(
+    def generate_text_to_image_ui(
         self,
-        fn,
-        on_success,
-        loading_message: str,
-        *args,
-        **kwargs,
+        prompt: str,
+        width: int,
+        height: int,
+        num_inference_steps: int,
+        guidance_scale: float,
+        seed: int,
     ) -> None:
-        if self._worker_thread is not None:
-            QMessageBox.warning(self, "Busy", "Another task is already running.")
+        if seed == 0:
+            seed = None
+
+        self.run_in_background(
+            generate_image_from_text,
+            lambda result: self._on_text_to_image_finished(result, prompt),
+            f"Generating image from text: '{prompt[:50]}...'",
+            prompt,
+            width,
+            height,
+            num_inference_steps,
+            guidance_scale,
+            seed,
+        )
+
+    def _on_text_to_image_finished(self, result: np.ndarray, prompt: str) -> None:
+        generated_pixmap = numpy_to_qpixmap(result)
+
+        if generated_pixmap.isNull():
+            QMessageBox.warning(
+                self,
+                "Generation Failed",
+                "Failed to create image from text.",
+            )
             return
 
-        self.show_loading(loading_message)
+        preview_dialog = ImagePreviewDialog(generated_pixmap, prompt, parent=self)
+        if preview_dialog.exec() and preview_dialog.should_use_image():
+            self.app_state.set_image(generated_pixmap, f"AI Generated: {prompt[:30]}...")
+            self.image_viewer.set_image(generated_pixmap)
+            self.control_panel.set_resize_source_dimensions(
+                generated_pixmap.width(),
+                generated_pixmap.height(),
+            )
+            self._update_action_states()
+            self._sync_interaction_modes()
 
-        self._worker_thread = QThread()
-        self._worker = TaskWorker(fn, *args, **kwargs)
-        self._worker.moveToThread(self._worker_thread)
+        self.statusBar().showMessage(
+            f"Generated image ready from text ({generated_pixmap.width()}×{generated_pixmap.height()})",
+            4000,
+        )
+        self.logger.info(
+            "Generated image from text: prompt='%s' size=%sx%s",
+            prompt,
+            generated_pixmap.width(),
+            generated_pixmap.height(),
+        )
 
-        self._worker_thread.started.connect(self._worker.run)
+    def _on_generative_ai_ready(self, result) -> None:
+        self._generative_ai_ready = True
+        self.statusBar().showMessage("Generative AI model loaded", 3000)
+        self.logger.info("Generative AI model loaded and ready")
 
-        self._worker.finished.connect(self._worker_thread.quit)
-        self._worker.finished.connect(self._worker.deleteLater)
-        self._worker_thread.finished.connect(self._worker_thread.deleteLater)
+    def on_module_selected(self, module_name: str) -> None:
+        self.control_panel.show_module(module_name)
+        self._sync_interaction_modes()
 
-        self._worker.error.connect(self._worker_thread.quit)
-        self._worker.error.connect(self._worker.deleteLater)
+        if module_name == "Generative AI" and not self._generative_ai_ready:
+            self.run_in_background(
+                preload_pipeline,
+                self._on_generative_ai_ready,
+                "Loading Generative AI model...",
+            )
 
-        self._worker.finished.connect(lambda result: self._handle_worker_success(result, on_success))
-        self._worker.error.connect(self._handle_worker_error)
+        self.statusBar().showMessage(f"Selected module: {module_name}", 2000)
+        self.logger.info("Selected module: %s", module_name)
+        self.control_panel.show_module(module_name)
+        self._sync_interaction_modes()
+        self.statusBar().showMessage(f"Selected module: {module_name}", 2000)
+        self.logger.info("Selected module: %s", module_name)
 
-        self._worker_thread.start()
+    def _sync_interaction_modes(self) -> None:
+        current_tool = self.control_panel.current_tool_name()
+        is_edit = self.control_panel.current_module == "Edit"
+        has_image = self.app_state.has_image()
 
+        enable_crop = is_edit and current_tool == "Crop" and has_image
+        enable_draw = (
+            is_edit
+            and current_tool == "Draw"
+            and has_image
+            and self.control_panel.draw_toggle_button.isChecked()
+        )
 
-    def _handle_worker_success(self, result, callback) -> None:
-        self.hide_loading()
-        callback(result)
-        self._worker = None
-        self._worker_thread = None
+        if enable_draw:
+            self.image_viewer.set_crop_mode(False)
+            self.image_viewer.set_draw_mode(True)
+            self.update_draw_brush(
+                self.control_panel.draw_size_slider.value(),
+                self.control_panel._draw_color,
+            )
+        else:
+            self.image_viewer.set_draw_mode(False)
 
+        if enable_crop:
+            self.image_viewer.set_crop_mode(True)
+        else:
+            self.image_viewer.set_crop_mode(False)
 
-    def _handle_worker_error(self, message: str) -> None:
-        self.hide_loading()
-        QMessageBox.critical(self, "Processing Error", message)
-        self.logger.error("Background task failed: %s", message)
-        self._worker = None
-        self._worker_thread = None
+    def _update_zoom_label(self, zoom_factor: float) -> None:
+        percent = round(zoom_factor * 100)
+        self.zoom_label.setText(f"Zoom: {percent}%")
+
+    def _update_image_info(self, width: int, height: int) -> None:
+        if self.app_state.current_image_path:
+            file_name = Path(self.app_state.current_image_path).name
+            self.image_info_label.setText(f"{file_name} | {width}×{height}")
+        else:
+            self.image_info_label.setText(f"{width}×{height}")
+
+    def _clear_image_info(self) -> None:
+        self.image_info_label.setText("No image")
+        self.zoom_label.setText("Zoom: 100%")
+        self.statusBar().showMessage("Image cleared", 3000)
+
+    def show_about_dialog(self) -> None:
+        QMessageBox.about(
+            self,
+            "About",
+            f"{APP_NAME}\nVersion {APP_VERSION}",
+        )

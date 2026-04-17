@@ -107,6 +107,10 @@ class GifPreviewDialog(QDialog):
         super().resizeEvent(event)
         self._show_current_frame()
 
+    def closeEvent(self, event) -> None:
+        self._timer.stop()
+        super().closeEvent(event)
+
     def _save_gif(self) -> None:
         if not self._frames_pil:
             QMessageBox.warning(self, "No GIF", "There is no GIF to save.")

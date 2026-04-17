@@ -15,8 +15,9 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QDoubleSpinBox,
     QSlider,
-    QColorDialog,
     QFrame,
+    QTextEdit,
+    QColorDialog,
 )
 
 
@@ -40,6 +41,8 @@ class ControlPanel(QWidget):
     style_preset_requested = Signal(str, int)
     style_custom_image_requested = Signal()
     style_custom_requested = Signal(int)
+
+    text_to_image_requested = Signal(str, int, int, int, float, int)
 
     def __init__(self) -> None:
         super().__init__()
@@ -74,9 +77,7 @@ class ControlPanel(QWidget):
 
         self.gif_page = self._build_gif_page()
         self.style_transfer_page = self._build_style_transfer_page()
-        self.generative_ai_page = self._build_placeholder_page(
-            "Generative AI tools will appear here."
-        )
+        self.generative_ai_page = self._build_generative_ai_page()
 
         self.stack.addWidget(self.empty_page)                 # 0
         self.stack.addWidget(self.resize_page)                # 1
@@ -637,6 +638,75 @@ class ControlPanel(QWidget):
         page.setLayout(layout)
         return page
 
+    def _build_generative_ai_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+
+        description = QLabel(
+            "Generate an image from a text description using AI. "
+            "The first generation may take longer as the model loads."
+        )
+        description.setWordWrap(True)
+
+        form_layout = QFormLayout()
+
+        self.text_prompt_edit = QTextEdit()
+        self.text_prompt_edit.setPlaceholderText(
+            "Describe the image you want to generate...\n\n"
+            "Examples:\n"
+            "• A beautiful sunset over mountains\n"
+            "• A cyberpunk city at night\n"
+            "• A serene lake with cherry blossoms\n"
+            "• A futuristic robot in a garden"
+        )
+        self.text_prompt_edit.setMaximumHeight(120)
+
+        self.width_spin = QSpinBox()
+        self.width_spin.setRange(256, 1024)
+        self.width_spin.setValue(512)
+        self.width_spin.setSingleStep(64)
+
+        self.height_spin = QSpinBox()
+        self.height_spin.setRange(256, 1024)
+        self.height_spin.setValue(512)
+        self.height_spin.setSingleStep(64)
+
+        self.steps_spin = QSpinBox()
+        self.steps_spin.setRange(10, 50)
+        self.steps_spin.setValue(20)
+        self.steps_spin.setToolTip("More steps = higher quality but slower generation")
+
+        self.guidance_spin = QDoubleSpinBox()
+        self.guidance_spin.setRange(1.0, 20.0)
+        self.guidance_spin.setValue(7.5)
+        self.guidance_spin.setSingleStep(0.5)
+        self.guidance_spin.setToolTip("Higher values follow the prompt more closely")
+
+        self.seed_spin = QSpinBox()
+        self.seed_spin.setRange(0, 999999)
+        self.seed_spin.setValue(0)
+        self.seed_spin.setSpecialValueText("Random")
+        self.seed_spin.setToolTip("Set a seed for reproducible results")
+
+        form_layout.addRow("Prompt", self.text_prompt_edit)
+        form_layout.addRow("Width", self.width_spin)
+        form_layout.addRow("Height", self.height_spin)
+        form_layout.addRow("Steps", self.steps_spin)
+        form_layout.addRow("Guidance", self.guidance_spin)
+        form_layout.addRow("Seed", self.seed_spin)
+
+        self.generate_button = QPushButton("Generate Image")
+        self.generate_button.setStyleSheet("font-weight: bold; padding: 10px;")
+        self.generate_button.clicked.connect(self._emit_text_to_image_requested)
+
+        layout.addWidget(description)
+        layout.addLayout(form_layout)
+        layout.addWidget(self.generate_button)
+        layout.addStretch()
+
+        page.setLayout(layout)
+        return page
+
     def show_module(self, module_name: str) -> None:
         self.current_module = module_name
         self.title.setText(module_name)
@@ -866,3 +936,17 @@ class ControlPanel(QWidget):
         self.style_custom_requested.emit(
             self.style_custom_strength_slider.value(),
         )
+
+    def _emit_text_to_image_requested(self) -> None:
+        prompt = self.text_prompt_edit.toPlainText().strip()
+        if not prompt:
+            QMessageBox.warning(self, "No Prompt", "Please enter a text prompt.")
+            return
+
+        width = self.width_spin.value()
+        height = self.height_spin.value()
+        steps = self.steps_spin.value()
+        guidance = self.guidance_spin.value()
+        seed = self.seed_spin.value() if self.seed_spin.value() != 0 else None
+
+        self.text_to_image_requested.emit(prompt, width, height, steps, guidance, seed)

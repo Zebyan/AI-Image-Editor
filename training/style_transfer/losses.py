@@ -75,7 +75,8 @@ class StyleTransferLoss(nn.Module):
         style_loss = 0.0
         for key in ("relu1_2", "relu2_2", "relu3_3", "relu4_3"):
             output_gram = gram_matrix(output_features[key])
-            style_loss = style_loss + self.mse(output_gram, style_grams[key])
+            style_gram_expanded = style_grams[key].unsqueeze(0).expand_as(output_gram)
+            style_loss = style_loss + self.mse(output_gram, style_gram_expanded)
 
         tv_loss = self.total_variation_loss(output_image)
 

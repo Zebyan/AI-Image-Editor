@@ -90,6 +90,37 @@ python main.py
 
 ---
 
+## 2.1 Training pentru preset-uri de style transfer
+
+Pentru a antrena un model de stil nou sau pentru a genera preset-urile `Mosaic` și `Sketch`, folosește scriptul de training din directorul `training/style_transfer`.
+
+### Exemplu pentru `Mosaic`
+
+```powershell
+cd training/style_transfer
+python train_style.py --dataset "path\to\content_images" --style-image "training/style_transfer/styles/mosaic.jpg" --output "models/style_transfer/mosaic.pth" --epochs 2
+```
+
+### Exemplu pentru `Sketch`
+
+```powershell
+cd training/style_transfer
+python train_style.py --dataset "path\to\content_images" --style-image "training/style_transfer/styles/sketch.jpg" --output "models/style_transfer/sketch.pth" --epochs 2
+```
+
+### Folosind `--preset-name`
+
+Dacă ai fișiere cu numele implicite `mosaic.jpg` și `sketch.jpg` în `training/style_transfer/styles`, poți apela scriptul astfel:
+
+```powershell
+python train_style.py --dataset "path\to\content_images" --preset-name "Mosaic" --epochs 2
+python train_style.py --dataset "path\to\content_images" --preset-name "Sketch" --epochs 2
+```
+
+Modelul va fi salvat implicit la `models/style_transfer/mosaic.pth` sau `models/style_transfer/sketch.pth`.
+
+---
+
 ## 3. Structura proiectului
 
 ```text
