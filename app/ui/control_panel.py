@@ -12,11 +12,13 @@ from PySide6.QtWidgets import (
     QComboBox,
     QPushButton,
     QHBoxLayout,
+    QDoubleSpinBox,
 )
 
 
 class ControlPanel(QWidget):
     resize_requested = Signal(int, int, str)
+    rotate_requested = Signal(float, str, bool)
 
     def __init__(self) -> None:
         super().__init__()
@@ -39,9 +41,11 @@ class ControlPanel(QWidget):
         self.stack = QStackedWidget()
         self.empty_page = self._build_empty_page()
         self.resize_page = self._build_resize_page()
+        self.rotate_page = self._build_rotate_page()
 
-        self.stack.addWidget(self.empty_page)
-        self.stack.addWidget(self.resize_page)
+        self.stack.addWidget(self.empty_page)   # 0
+        self.stack.addWidget(self.resize_page)  # 1
+        self.stack.addWidget(self.rotate_page)  # 2
 
         self.layout.addWidget(self.title)
         self.layout.addWidget(self.description)
@@ -80,8 +84,8 @@ class ControlPanel(QWidget):
         self.keep_aspect_checkbox = QCheckBox("Keep aspect ratio")
         self.keep_aspect_checkbox.setChecked(True)
 
-        self.interpolation_combo = QComboBox()
-        self.interpolation_combo.addItems([
+        self.resize_interpolation_combo = QComboBox()
+        self.resize_interpolation_combo.addItems([
             "Nearest",
             "Bilinear",
             "Bicubic",
@@ -95,7 +99,7 @@ class ControlPanel(QWidget):
         form.addRow("Width", self.resize_width_spin)
         form.addRow("Height", self.resize_height_spin)
         form.addRow("", self.keep_aspect_checkbox)
-        form.addRow("Interpolation", self.interpolation_combo)
+        form.addRow("Interpolation", self.resize_interpolation_combo)
 
         button_row = QHBoxLayout()
         self.resize_apply_button = QPushButton("Apply Resize")
@@ -109,6 +113,63 @@ class ControlPanel(QWidget):
 
         layout.addLayout(form)
         layout.addLayout(button_row)
+        layout.addStretch()
+
+        page.setLayout(layout)
+        return page
+
+    def _build_rotate_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+        form = QFormLayout()
+
+        self.rotate_angle_spin = QDoubleSpinBox()
+        self.rotate_angle_spin.setRange(-360.0, 360.0)
+        self.rotate_angle_spin.setDecimals(1)
+        self.rotate_angle_spin.setSingleStep(1.0)
+        self.rotate_angle_spin.setValue(0.0)
+
+        self.rotate_interpolation_combo = QComboBox()
+        self.rotate_interpolation_combo.addItems([
+            "Nearest",
+            "Bilinear",
+            "Bicubic",
+            "Lanczos",
+        ])
+
+        self.expand_canvas_checkbox = QCheckBox("Expand canvas to fit rotated image")
+        self.expand_canvas_checkbox.setChecked(True)
+
+        form.addRow("Angle (degrees)", self.rotate_angle_spin)
+        form.addRow("Interpolation", self.rotate_interpolation_combo)
+        form.addRow("", self.expand_canvas_checkbox)
+
+        quick_row = QHBoxLayout()
+        self.rotate_minus_90_button = QPushButton("-90°")
+        self.rotate_plus_90_button = QPushButton("+90°")
+        self.rotate_180_button = QPushButton("180°")
+
+        self.rotate_minus_90_button.clicked.connect(lambda: self.rotate_angle_spin.setValue(-90.0))
+        self.rotate_plus_90_button.clicked.connect(lambda: self.rotate_angle_spin.setValue(90.0))
+        self.rotate_180_button.clicked.connect(lambda: self.rotate_angle_spin.setValue(180.0))
+
+        quick_row.addWidget(self.rotate_minus_90_button)
+        quick_row.addWidget(self.rotate_plus_90_button)
+        quick_row.addWidget(self.rotate_180_button)
+
+        action_row = QHBoxLayout()
+        self.rotate_apply_button = QPushButton("Apply Rotation")
+        self.rotate_reset_button = QPushButton("Reset Fields")
+
+        self.rotate_apply_button.clicked.connect(self._emit_rotate_requested)
+        self.rotate_reset_button.clicked.connect(self._reset_rotate_fields)
+
+        action_row.addWidget(self.rotate_apply_button)
+        action_row.addWidget(self.rotate_reset_button)
+
+        layout.addLayout(form)
+        layout.addLayout(quick_row)
+        layout.addLayout(action_row)
         layout.addStretch()
 
         page.setLayout(layout)
@@ -198,8 +259,14 @@ class ControlPanel(QWidget):
         self.resize_height_spin.blockSignals(False)
 
     def _on_tool_changed(self, tool_name: str) -> None:
-        if self.current_module == "Edit" and tool_name == "Resize":
+        if self.current_module != "Edit":
+            self.stack.setCurrentIndex(0)
+            return
+
+        if tool_name == "Resize":
             self.stack.setCurrentIndex(1)
+        elif tool_name == "Rotate":
+            self.stack.setCurrentIndex(2)
         else:
             self.stack.setCurrentIndex(0)
 
@@ -234,7 +301,7 @@ class ControlPanel(QWidget):
     def _emit_resize_requested(self) -> None:
         width = self.resize_width_spin.value()
         height = self.resize_height_spin.value()
-        interpolation = self.interpolation_combo.currentText()
+        interpolation = self.resize_interpolation_combo.currentText()
         self.resize_requested.emit(width, height, interpolation)
 
     def _reset_resize_fields(self) -> None:
@@ -243,3 +310,14 @@ class ControlPanel(QWidget):
                 self._original_resize_width,
                 self._original_resize_height,
             )
+
+    def _emit_rotate_requested(self) -> None:
+        angle = self.rotate_angle_spin.value()
+        interpolation = self.rotate_interpolation_combo.currentText()
+        expand_canvas = self.expand_canvas_checkbox.isChecked()
+        self.rotate_requested.emit(angle, interpolation, expand_canvas)
+
+    def _reset_rotate_fields(self) -> None:
+        self.rotate_angle_spin.setValue(0.0)
+        self.rotate_interpolation_combo.setCurrentText("Bilinear")
+        self.expand_canvas_checkbox.setChecked(True)

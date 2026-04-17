@@ -1,7 +1,7 @@
 from pathlib import Path
-from app.process.edit.resize import resize_pixmap
+
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QPixmap
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QFileDialog,
     QDockWidget,
@@ -19,6 +19,8 @@ from app.constants import (
     MIN_WINDOW_HEIGHT,
 )
 from app.logger import setup_logger
+from app.process.edit.resize import resize_pixmap
+from app.process.edit.rotate import rotate_pixmap
 from app.services.image_io import is_supported_image, load_pixmap
 from app.ui.control_panel import ControlPanel
 from app.ui.image_viewer import ImageViewer
@@ -60,11 +62,12 @@ class MainWindow(QMainWindow):
         self.image_viewer.zoom_changed.connect(self._update_zoom_label)
         self.image_viewer.image_loaded.connect(self._update_image_info)
         self.image_viewer.image_cleared.connect(self._clear_image_info)
+
         self.sidebar.module_selected.connect(self.on_module_selected)
+        self.control_panel.resize_requested.connect(self.apply_resize)
+        self.control_panel.rotate_requested.connect(self.apply_rotate)
 
         self.statusBar().showMessage("Ready")
-
-        self.control_panel.resize_requested.connect(self.apply_resize)
 
     def _create_actions(self) -> None:
         self.open_action = QAction("Open", self)
@@ -182,8 +185,8 @@ class MainWindow(QMainWindow):
             return
 
         self.app_state.set_image(pixmap, file_path)
-        self.control_panel.set_resize_source_dimensions(pixmap.width(), pixmap.height())
         self._display_current_image()
+        self.control_panel.set_resize_source_dimensions(pixmap.width(), pixmap.height())
 
         file_name = Path(file_path).name
         self.statusBar().showMessage(f"Loaded: {file_name}", 3000)
@@ -208,7 +211,7 @@ class MainWindow(QMainWindow):
         if not self.app_state.has_image():
             return
 
-        file_path, selected_filter = QFileDialog.getSaveFileName(
+        file_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save Image As",
             "",
@@ -239,8 +242,8 @@ class MainWindow(QMainWindow):
             return
 
         self.image_viewer.set_image(pixmap)
-        self._update_action_states()
         self.control_panel.set_resize_source_dimensions(pixmap.width(), pixmap.height())
+        self._update_action_states()
         self.statusBar().showMessage("Undo", 2000)
         self.logger.info("Undo action")
 
@@ -250,8 +253,8 @@ class MainWindow(QMainWindow):
             return
 
         self.image_viewer.set_image(pixmap)
-        self._update_action_states()
         self.control_panel.set_resize_source_dimensions(pixmap.width(), pixmap.height())
+        self._update_action_states()
         self.statusBar().showMessage("Redo", 2000)
         self.logger.info("Redo action")
 
@@ -261,64 +264,11 @@ class MainWindow(QMainWindow):
             return
 
         self.image_viewer.set_image(pixmap)
-        self._update_action_states()
         self.control_panel.set_resize_source_dimensions(pixmap.width(), pixmap.height())
+        self._update_action_states()
         self.statusBar().showMessage("Reset to original", 2000)
         self.logger.info("Reset image to original")
 
-    def apply_demo_change(self) -> None:
-        """
-        Temporary helper for testing history before EPIC 4/5.
-        Creates a scaled copy to prove undo/redo works.
-        """
-        if not self.app_state.has_image():
-            return
-
-        current = self.app_state.current_pixmap
-        if current is None or current.isNull():
-            return
-
-        new_pixmap = current.scaled(
-            max(1, current.width() - 50),
-            max(1, current.height() - 50),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-
-        self.app_state.apply_new_current(new_pixmap)
-        self.image_viewer.set_image(new_pixmap)
-        self._update_action_states()
-        self.statusBar().showMessage("Applied demo change", 2000)
-        self.logger.info("Applied demo change")
-
-    def _update_zoom_label(self, zoom_factor: float) -> None:
-        percent = round(zoom_factor * 100)
-        self.zoom_label.setText(f"Zoom: {percent}%")
-
-    def _update_image_info(self, width: int, height: int) -> None:
-        if self.app_state.current_image_path:
-            file_name = Path(self.app_state.current_image_path).name
-            self.image_info_label.setText(f"{file_name} | {width}×{height}")
-        else:
-            self.image_info_label.setText(f"{width}×{height}")
-
-    def _clear_image_info(self) -> None:
-        self.image_info_label.setText("No image")
-        self.zoom_label.setText("Zoom: 100%")
-        self.statusBar().showMessage("Image cleared", 3000)
-
-    def show_about_dialog(self) -> None:
-        QMessageBox.about(
-            self,
-            "About",
-            f"{APP_NAME}\nVersion {APP_VERSION}",
-        )
-    
-    def on_module_selected(self, module_name: str) -> None:
-        self.control_panel.show_module(module_name)
-        self.statusBar().showMessage(f"Selected module: {module_name}", 2000)
-        self.logger.info("Selected module: %s", module_name)
-    
     def apply_resize(self, width: int, height: int, interpolation: str) -> None:
         if not self.app_state.has_image():
             QMessageBox.warning(self, "No Image", "Load an image first.")
@@ -342,17 +292,85 @@ class MainWindow(QMainWindow):
         self._update_action_states()
 
         self.statusBar().showMessage(
-        (
-            f"Resized {original_width}×{original_height} → "
-            f"{resized.width()}×{resized.height()} using {interpolation}"
-        ),
-        4000,
-    )
+            (
+                f"Resized {original_width}×{original_height} → "
+                f"{resized.width()}×{resized.height()} using {interpolation}"
+            ),
+            4000,
+        )
         self.logger.info(
             "Resized image from %sx%s to %sx%s using %s",
             original_width,
             original_height,
             resized.width(),
             resized.height(),
-            interpolation
+            interpolation,
+        )
+
+    def apply_rotate(self, angle: float, interpolation: str, expand_canvas: bool) -> None:
+        if not self.app_state.has_image():
+            QMessageBox.warning(self, "No Image", "Load an image first.")
+            return
+
+        current = self.app_state.current_pixmap
+        if current is None or current.isNull():
+            return
+
+        original_width = current.width()
+        original_height = current.height()
+
+        rotated = rotate_pixmap(current, angle, interpolation, expand_canvas)
+        if rotated.isNull():
+            QMessageBox.warning(self, "Rotate Failed", "Failed to rotate image.")
+            return
+
+        self.app_state.apply_new_current(rotated)
+        self.image_viewer.set_image(rotated)
+        self.control_panel.set_resize_source_dimensions(rotated.width(), rotated.height())
+        self._update_action_states()
+
+        self.statusBar().showMessage(
+            (
+                f"Rotated {original_width}×{original_height} → "
+                f"{rotated.width()}×{rotated.height()} by {angle:.1f}°"
+            ),
+            4000,
+        )
+        self.logger.info(
+            "Rotated image from %sx%s to %sx%s by %.1f degrees using %s (expand=%s)",
+            original_width,
+            original_height,
+            rotated.width(),
+            rotated.height(),
+            angle,
+            interpolation,
+            expand_canvas,
+        )
+
+    def on_module_selected(self, module_name: str) -> None:
+        self.control_panel.show_module(module_name)
+        self.statusBar().showMessage(f"Selected module: {module_name}", 2000)
+        self.logger.info("Selected module: %s", module_name)
+
+    def _update_zoom_label(self, zoom_factor: float) -> None:
+        percent = round(zoom_factor * 100)
+        self.zoom_label.setText(f"Zoom: {percent}%")
+
+    def _update_image_info(self, width: int, height: int) -> None:
+        if self.app_state.current_image_path:
+            file_name = Path(self.app_state.current_image_path).name
+            self.image_info_label.setText(f"{file_name} | {width}×{height}")
+        else:
+            self.image_info_label.setText(f"{width}×{height}")
+
+    def _clear_image_info(self) -> None:
+        self.image_info_label.setText("No image")
+        self.zoom_label.setText("Zoom: 100%")
+        self.statusBar().showMessage("Image cleared", 3000)
+
+    def show_about_dialog(self) -> None:
+        QMessageBox.about(
+            self,
+            "About",
+            f"{APP_NAME}\nVersion {APP_VERSION}",
         )
