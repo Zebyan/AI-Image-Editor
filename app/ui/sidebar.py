@@ -18,12 +18,9 @@ class Sidebar(QWidget):
 
         modules = [
             "Edit",
-            "Analysis",
-            "Classification",
-            "Detection",
+            "GIF",
             "Style Transfer",
             "Generative AI",
-            "3D",
         ]
 
         for index, name in enumerate(modules):
@@ -34,7 +31,9 @@ class Sidebar(QWidget):
             self.buttons[name] = btn
             layout.addWidget(btn)
 
-            btn.clicked.connect(lambda checked, module=name: self._on_module_clicked(module))
+            btn.clicked.connect(
+                lambda checked, module=name: self._on_module_clicked(module)
+            )
 
         layout.addStretch()
         self.setLayout(layout)

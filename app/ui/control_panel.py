@@ -34,6 +34,9 @@ class ControlPanel(QWidget):
     draw_apply_requested = Signal()
     draw_cancel_requested = Signal()
 
+    gif_generate_requested = Signal(str, int, float, int, int, int)
+    gif_save_requested = Signal()
+
     def __init__(self) -> None:
         super().__init__()
 
@@ -54,7 +57,9 @@ class ControlPanel(QWidget):
         self.tool_list.currentTextChanged.connect(self._on_tool_changed)
 
         self.stack = QStackedWidget()
+
         self.empty_page = self._build_empty_page()
+
         self.resize_page = self._build_resize_page()
         self.rotate_page = self._build_rotate_page()
         self.flip_page = self._build_flip_page()
@@ -62,6 +67,15 @@ class ControlPanel(QWidget):
         self.brightness_contrast_page = self._build_brightness_contrast_page()
         self.blur_page = self._build_blur_page()
         self.draw_page = self._build_draw_page()
+
+        self.gif_page = self._build_gif_page()
+
+        self.style_transfer_page = self._build_placeholder_page(
+            "Style Transfer tools will appear here.\nYou will choose a second image as the style source."
+        )
+        self.generative_ai_page = self._build_placeholder_page(
+            "Generative AI tools will appear here.\nYou will enter a prompt and generate an image."
+        )
 
         self.stack.addWidget(self.empty_page)                 # 0
         self.stack.addWidget(self.resize_page)                # 1
@@ -71,6 +85,9 @@ class ControlPanel(QWidget):
         self.stack.addWidget(self.brightness_contrast_page)   # 5
         self.stack.addWidget(self.blur_page)                  # 6
         self.stack.addWidget(self.draw_page)                  # 7
+        self.stack.addWidget(self.gif_page)                   # 8
+        self.stack.addWidget(self.style_transfer_page)        # 9
+        self.stack.addWidget(self.generative_ai_page)         # 10
 
         self.layout.addWidget(self.title)
         self.layout.addWidget(self.description)
@@ -87,6 +104,16 @@ class ControlPanel(QWidget):
         page = QWidget()
         layout = QVBoxLayout()
         label = QLabel("Select a tool to configure it.")
+        label.setWordWrap(True)
+        layout.addWidget(label)
+        layout.addStretch()
+        page.setLayout(layout)
+        return page
+
+    def _build_placeholder_page(self, text: str) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+        label = QLabel(text)
         label.setWordWrap(True)
         layout.addWidget(label)
         layout.addStretch()
@@ -437,9 +464,8 @@ class ControlPanel(QWidget):
         layout.addLayout(action_row)
         layout.addStretch()
 
-        return_widget = page
-        return_widget.setLayout(layout)
-        return return_widget
+        page.setLayout(layout)
+        return page
 
     def show_module(self, module_name: str) -> None:
         self.current_module = module_name
@@ -448,7 +474,7 @@ class ControlPanel(QWidget):
         self.stack.setCurrentIndex(0)
 
         if module_name == "Edit":
-            self.description.setText("Core image editing tools will appear here.")
+            self.description.setText("Core image editing tools.")
             tools = [
                 "Resize",
                 "Rotate",
@@ -458,48 +484,20 @@ class ControlPanel(QWidget):
                 "Blur",
                 "Draw",
             ]
-        elif module_name == "Analysis":
-            self.description.setText("Image analysis and metadata tools.")
+        elif module_name == "GIF":
+            self.description.setText("Create an animated GIF from the current image.")
             tools = [
-                "Histogram",
-                "Color Palette",
-                "EXIF Metadata",
-                "Sharpness Score",
-            ]
-        elif module_name == "Classification":
-            self.description.setText("Image classification tools.")
-            tools = [
-                "ResNet-50",
-                "EfficientNet-B0",
-                "MobileNet-V3",
-            ]
-        elif module_name == "Detection":
-            self.description.setText("Detection and segmentation tools.")
-            tools = [
-                "Face Detection",
-                "Object Detection",
-                "Segmentation",
+                "Animated GIF",
             ]
         elif module_name == "Style Transfer":
-            self.description.setText("Style transfer tools.")
+            self.description.setText("Apply the style of another image to the current image.")
             tools = [
-                "Fast Neural Style",
-                "AdaIN",
-                "Custom Style Image",
+                "Apply Style Image",
             ]
         elif module_name == "Generative AI":
-            self.description.setText("Generative workflows.")
+            self.description.setText("Generate an image from text.")
             tools = [
-                "Text-to-Image",
-                "Image-to-Image",
-                "Inpainting",
-                "Upscaling",
-            ]
-        elif module_name == "3D":
-            self.description.setText("3D generation and export tools.")
-            tools = [
-                "Image to 3D Mesh",
-                "Export Mesh",
+                "Text to Image",
             ]
         else:
             self.description.setText("Select a module to see tools.")
@@ -552,24 +550,29 @@ class ControlPanel(QWidget):
         return item.text() if item else ""
 
     def _on_tool_changed(self, tool_name: str) -> None:
-        if self.current_module != "Edit":
-            self.stack.setCurrentIndex(0)
-            return
-
-        if tool_name == "Resize":
-            self.stack.setCurrentIndex(1)
-        elif tool_name == "Rotate":
-            self.stack.setCurrentIndex(2)
-        elif tool_name == "Flip":
-            self.stack.setCurrentIndex(3)
-        elif tool_name == "Crop":
-            self.stack.setCurrentIndex(4)
-        elif tool_name == "Brightness / Contrast":
-            self.stack.setCurrentIndex(5)
-        elif tool_name == "Blur":
-            self.stack.setCurrentIndex(6)
-        elif tool_name == "Draw":
-            self.stack.setCurrentIndex(7)
+        if self.current_module == "Edit":
+            if tool_name == "Resize":
+                self.stack.setCurrentIndex(1)
+            elif tool_name == "Rotate":
+                self.stack.setCurrentIndex(2)
+            elif tool_name == "Flip":
+                self.stack.setCurrentIndex(3)
+            elif tool_name == "Crop":
+                self.stack.setCurrentIndex(4)
+            elif tool_name == "Brightness / Contrast":
+                self.stack.setCurrentIndex(5)
+            elif tool_name == "Blur":
+                self.stack.setCurrentIndex(6)
+            elif tool_name == "Draw":
+                self.stack.setCurrentIndex(7)
+            else:
+                self.stack.setCurrentIndex(0)
+        elif self.current_module == "GIF":
+            self.stack.setCurrentIndex(8)
+        elif self.current_module == "Style Transfer":
+            self.stack.setCurrentIndex(9)
+        elif self.current_module == "Generative AI":
+            self.stack.setCurrentIndex(10)
         else:
             self.stack.setCurrentIndex(0)
 
@@ -657,3 +660,81 @@ class ControlPanel(QWidget):
     def _on_draw_toggled(self, checked: bool) -> None:
         self.draw_toggle_button.setText("Stop Drawing" if checked else "Start Drawing")
         self.draw_mode_toggled.emit(checked)
+
+    def _build_gif_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+        form = QFormLayout()
+
+        self.gif_effect_combo = QComboBox()
+        self.gif_effect_combo.addItems([
+            "Zoom Loop",
+            "Pan Loop",
+            "Blur Pulse",
+        ])
+
+        self.gif_frame_count_spin = QSpinBox()
+        self.gif_frame_count_spin.setRange(2, 60)
+        self.gif_frame_count_spin.setValue(12)
+
+        self.gif_max_zoom_spin = QDoubleSpinBox()
+        self.gif_max_zoom_spin.setRange(1.0, 2.0)
+        self.gif_max_zoom_spin.setSingleStep(0.01)
+        self.gif_max_zoom_spin.setDecimals(2)
+        self.gif_max_zoom_spin.setValue(1.15)
+
+        self.gif_pan_pixels_spin = QSpinBox()
+        self.gif_pan_pixels_spin.setRange(0, 300)
+        self.gif_pan_pixels_spin.setValue(30)
+
+        self.gif_blur_strength_spin = QSpinBox()
+        self.gif_blur_strength_spin.setRange(0, 20)
+        self.gif_blur_strength_spin.setValue(4)
+
+        self.gif_duration_spin = QSpinBox()
+        self.gif_duration_spin.setRange(20, 1000)
+        self.gif_duration_spin.setValue(80)
+
+        form.addRow("Effect", self.gif_effect_combo)
+        form.addRow("Frame Count", self.gif_frame_count_spin)
+        form.addRow("Max Zoom", self.gif_max_zoom_spin)
+        form.addRow("Pan Pixels", self.gif_pan_pixels_spin)
+        form.addRow("Blur Strength", self.gif_blur_strength_spin)
+        form.addRow("Frame Duration (ms)", self.gif_duration_spin)
+
+        button_row = QHBoxLayout()
+        self.gif_generate_button = QPushButton("Generate GIF")
+        self.gif_save_button = QPushButton("Save GIF")
+        self.gif_save_button.setEnabled(False)
+
+        self.gif_generate_button.clicked.connect(self._emit_gif_generate_requested)
+        self.gif_save_button.clicked.connect(self.gif_save_requested.emit)
+
+        button_row.addWidget(self.gif_generate_button)
+        button_row.addWidget(self.gif_save_button)
+
+        self.gif_status_label = QLabel("No GIF generated yet.")
+        self.gif_status_label.setWordWrap(True)
+
+        layout.addLayout(form)
+        layout.addLayout(button_row)
+        layout.addWidget(self.gif_status_label)
+        layout.addStretch()
+
+        page.setLayout(layout)
+        return page
+    
+    def _emit_gif_generate_requested(self) -> None:
+        self.gif_generate_requested.emit(
+            self.gif_effect_combo.currentText(),
+            self.gif_frame_count_spin.value(),
+            self.gif_max_zoom_spin.value(),
+            self.gif_pan_pixels_spin.value(),
+            self.gif_blur_strength_spin.value(),
+            self.gif_duration_spin.value(),
+        )
+
+
+    def set_gif_ready(self, ready: bool, message: str) -> None:
+        self.gif_save_button.setEnabled(ready)
+        self.gif_status_label.setText(message)

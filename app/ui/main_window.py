@@ -23,6 +23,8 @@ from app.process.edit.blur import apply_gaussian_blur
 from app.process.edit.brightness_contrast import (
     adjust_brightness_contrast,
 )
+from app.ui.gif_window import GifPreviewDialog
+from app.process.gif.gif import generate_gif_frames, save_gif
 from app.process.edit.crop import crop_pixmap
 from app.process.edit.flip import flip_pixmap
 from app.process.edit.resize import resize_pixmap
@@ -40,6 +42,10 @@ class MainWindow(QMainWindow):
         self.logger = setup_logger()
         self.app_state = AppState()
 
+        self._generated_gif_frames = []
+        self._generated_gif_duration_ms = 120
+        
+
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
         self.resize(WINDOW_WIDTH, WINDOW_HEIGHT)
         self.setMinimumSize(MIN_WINDOW_WIDTH, MIN_WINDOW_HEIGHT)
@@ -54,6 +60,8 @@ class MainWindow(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.sidebar_dock)
 
         self.control_panel = ControlPanel()
+        self.control_panel.gif_generate_requested.connect(self.generate_gif)
+        self.control_panel.gif_save_requested.connect(self.save_generated_gif)
         self.control_dock = QDockWidget("Controls", self)
         self.control_dock.setWidget(self.control_panel)
         self.control_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
@@ -620,3 +628,93 @@ class MainWindow(QMainWindow):
             "About",
             f"{APP_NAME}\nVersion {APP_VERSION}",
         )
+    
+    def generate_gif(
+        self,
+        effect: str,
+        frame_count: int,
+        max_zoom: float,
+        pan_pixels: int,
+        blur_strength: int,
+        duration_ms: int,
+    ) -> None:
+        if not self.app_state.has_image():
+            QMessageBox.warning(self, "No Image", "Load an image first.")
+            return
+
+        current = self.app_state.current_pixmap
+        if current is None or current.isNull():
+            QMessageBox.warning(self, "No Image", "Load an image first.")
+            return
+
+        frames = generate_gif_frames(
+            current,
+            effect=effect,
+            frame_count=frame_count,
+            max_zoom=max_zoom,
+            pan_pixels=pan_pixels,
+            blur_strength=blur_strength,
+        )
+
+        if not frames:
+            QMessageBox.warning(self, "GIF Failed", "Failed to generate GIF frames.")
+            self.control_panel.set_gif_ready(False, "GIF generation failed.")
+            return
+
+        self._generated_gif_frames = frames
+        self._generated_gif_duration_ms = duration_ms
+
+        total_frames = len(frames)
+        self.control_panel.set_gif_ready(
+            True,
+            f"Generated {effect} GIF with {total_frames} frames. Ready to preview or save.",
+        )
+        self.statusBar().showMessage(
+            f"Generated GIF frames: effect={effect}, frames={total_frames}",
+            3000,
+        )
+        self.logger.info(
+            "Generated GIF: effect=%s frame_count=%s total_output_frames=%s duration_ms=%s",
+            effect,
+            frame_count,
+            total_frames,
+            duration_ms,
+        )
+
+        preview = GifPreviewDialog(
+            frames=frames,
+            duration_ms=duration_ms,
+            effect_name=effect,
+            parent=self,
+        )
+        preview.exec()
+
+    def set_gif_ready(self, ready: bool, message: str) -> None:
+        self.gif_save_button.setEnabled(ready)
+        self.gif_status_label.setText(message)
+
+    def save_generated_gif(self) -> None:
+        if not self._generated_gif_frames:
+            QMessageBox.warning(self, "No GIF", "Generate a GIF first.")
+            return
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save GIF",
+            "",
+            "GIF Image (*.gif)",
+        )
+
+        if not file_path:
+            return
+
+        try:
+            save_gif(self._generated_gif_frames, file_path, self._generated_gif_duration_ms)
+        except Exception as exc:
+            QMessageBox.critical(self, "Save Error", f"Failed to save GIF.\n{exc}")
+            self.logger.error("Failed to save GIF: %s", exc)
+            return
+
+        file_name = Path(file_path).name
+        self.statusBar().showMessage(f"Saved GIF: {file_name}", 3000)
+        self.logger.info("Saved GIF: %s", file_path)
