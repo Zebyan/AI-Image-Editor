@@ -1,5 +1,5 @@
 from pathlib import Path
-
+from app.process.edit.resize import resize_pixmap
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QPixmap
 from PySide6.QtWidgets import (
@@ -63,6 +63,8 @@ class MainWindow(QMainWindow):
         self.sidebar.module_selected.connect(self.on_module_selected)
 
         self.statusBar().showMessage("Ready")
+
+        self.control_panel.resize_requested.connect(self.apply_resize)
 
     def _create_actions(self) -> None:
         self.open_action = QAction("Open", self)
@@ -180,6 +182,7 @@ class MainWindow(QMainWindow):
             return
 
         self.app_state.set_image(pixmap, file_path)
+        self.control_panel.set_resize_source_dimensions(pixmap.width(), pixmap.height())
         self._display_current_image()
 
         file_name = Path(file_path).name
@@ -237,6 +240,7 @@ class MainWindow(QMainWindow):
 
         self.image_viewer.set_image(pixmap)
         self._update_action_states()
+        self.control_panel.set_resize_source_dimensions(pixmap.width(), pixmap.height())
         self.statusBar().showMessage("Undo", 2000)
         self.logger.info("Undo action")
 
@@ -247,6 +251,7 @@ class MainWindow(QMainWindow):
 
         self.image_viewer.set_image(pixmap)
         self._update_action_states()
+        self.control_panel.set_resize_source_dimensions(pixmap.width(), pixmap.height())
         self.statusBar().showMessage("Redo", 2000)
         self.logger.info("Redo action")
 
@@ -257,6 +262,7 @@ class MainWindow(QMainWindow):
 
         self.image_viewer.set_image(pixmap)
         self._update_action_states()
+        self.control_panel.set_resize_source_dimensions(pixmap.width(), pixmap.height())
         self.statusBar().showMessage("Reset to original", 2000)
         self.logger.info("Reset image to original")
 
@@ -312,3 +318,41 @@ class MainWindow(QMainWindow):
         self.control_panel.show_module(module_name)
         self.statusBar().showMessage(f"Selected module: {module_name}", 2000)
         self.logger.info("Selected module: %s", module_name)
+    
+    def apply_resize(self, width: int, height: int, interpolation: str) -> None:
+        if not self.app_state.has_image():
+            QMessageBox.warning(self, "No Image", "Load an image first.")
+            return
+
+        current = self.app_state.current_pixmap
+        if current is None or current.isNull():
+            return
+
+        original_width = current.width()
+        original_height = current.height()
+
+        resized = resize_pixmap(current, width, height, interpolation)
+        if resized.isNull():
+            QMessageBox.warning(self, "Resize Failed", "Failed to resize image.")
+            return
+
+        self.app_state.apply_new_current(resized)
+        self.image_viewer.set_image(resized)
+        self.control_panel.set_resize_source_dimensions(resized.width(), resized.height())
+        self._update_action_states()
+
+        self.statusBar().showMessage(
+        (
+            f"Resized {original_width}×{original_height} → "
+            f"{resized.width()}×{resized.height()} using {interpolation}"
+        ),
+        4000,
+    )
+        self.logger.info(
+            "Resized image from %sx%s to %sx%s using %s",
+            original_width,
+            original_height,
+            resized.width(),
+            resized.height(),
+            interpolation
+        )
