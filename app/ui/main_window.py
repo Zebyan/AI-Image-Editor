@@ -19,6 +19,9 @@ from app.constants import (
     MIN_WINDOW_HEIGHT,
 )
 from app.logger import setup_logger
+from app.process.edit.brightness_contrast import (
+    adjust_brightness_contrast,
+)
 from app.process.edit.crop import crop_pixmap
 from app.process.edit.flip import flip_pixmap
 from app.process.edit.resize import resize_pixmap
@@ -74,7 +77,12 @@ class MainWindow(QMainWindow):
         self.control_panel.flip_requested.connect(self.apply_flip)
         self.control_panel.crop_apply_requested.connect(self.apply_crop)
         self.control_panel.crop_cancel_requested.connect(self.cancel_crop)
-        self.control_panel.tool_list.currentTextChanged.connect(lambda _: self._sync_crop_mode())
+        self.control_panel.brightness_contrast_requested.connect(
+            self.apply_brightness_contrast
+        )
+        self.control_panel.tool_list.currentTextChanged.connect(
+            lambda _: self._sync_crop_mode()
+        )
 
         self.statusBar().showMessage("Ready")
 
@@ -195,8 +203,8 @@ class MainWindow(QMainWindow):
 
         self.app_state.set_image(pixmap, file_path)
         self._display_current_image()
-        self._sync_crop_mode()
         self.control_panel.set_resize_source_dimensions(pixmap.width(), pixmap.height())
+        self._sync_crop_mode()
 
         file_name = Path(file_path).name
         self.statusBar().showMessage(f"Loaded: {file_name}", 3000)
@@ -255,6 +263,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.set_image(pixmap)
         self.control_panel.set_resize_source_dimensions(pixmap.width(), pixmap.height())
         self._update_action_states()
+        self._sync_crop_mode()
         self.statusBar().showMessage("Undo", 2000)
         self.logger.info("Undo action")
 
@@ -266,6 +275,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.set_image(pixmap)
         self.control_panel.set_resize_source_dimensions(pixmap.width(), pixmap.height())
         self._update_action_states()
+        self._sync_crop_mode()
         self.statusBar().showMessage("Redo", 2000)
         self.logger.info("Redo action")
 
@@ -277,6 +287,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.set_image(pixmap)
         self.control_panel.set_resize_source_dimensions(pixmap.width(), pixmap.height())
         self._update_action_states()
+        self._sync_crop_mode()
         self.statusBar().showMessage("Reset to original", 2000)
         self.logger.info("Reset image to original")
 
@@ -301,6 +312,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.set_image(resized)
         self.control_panel.set_resize_source_dimensions(resized.width(), resized.height())
         self._update_action_states()
+        self._sync_crop_mode()
 
         self.statusBar().showMessage(
             (
@@ -339,6 +351,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.set_image(rotated)
         self.control_panel.set_resize_source_dimensions(rotated.width(), rotated.height())
         self._update_action_states()
+        self._sync_crop_mode()
 
         self.statusBar().showMessage(
             (
@@ -376,6 +389,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.set_image(flipped)
         self.control_panel.set_resize_source_dimensions(flipped.width(), flipped.height())
         self._update_action_states()
+        self._sync_crop_mode()
 
         self.statusBar().showMessage(f"Flipped image: {direction}", 3000)
         self.logger.info("Flipped image: %s", direction)
@@ -404,6 +418,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.set_image(cropped)
         self.control_panel.set_resize_source_dimensions(cropped.width(), cropped.height())
         self._update_action_states()
+        self._sync_crop_mode()
 
         self.statusBar().showMessage(
             f"Cropped image to {cropped.width()}×{cropped.height()}",
@@ -419,6 +434,40 @@ class MainWindow(QMainWindow):
 
         if self.control_panel.current_tool_name() == "Crop":
             self.image_viewer.set_crop_mode(True)
+
+    def apply_brightness_contrast(self, brightness: int, contrast: int) -> None:
+        if not self.app_state.has_image():
+            QMessageBox.warning(self, "No Image", "Load an image first.")
+            return
+
+        current = self.app_state.current_pixmap
+        if current is None or current.isNull():
+            return
+
+        adjusted = adjust_brightness_contrast(current, brightness, contrast)
+        if adjusted.isNull():
+            QMessageBox.warning(
+                self,
+                "Adjustment Failed",
+                "Failed to apply brightness/contrast adjustment.",
+            )
+            return
+
+        self.app_state.apply_new_current(adjusted)
+        self.image_viewer.set_image(adjusted)
+        self.control_panel.set_resize_source_dimensions(adjusted.width(), adjusted.height())
+        self._update_action_states()
+        self._sync_crop_mode()
+
+        self.statusBar().showMessage(
+            f"Applied brightness={brightness}, contrast={contrast}",
+            3000,
+        )
+        self.logger.info(
+            "Applied brightness/contrast adjustment: brightness=%s contrast=%s",
+            brightness,
+            contrast,
+        )
 
     def cancel_crop(self) -> None:
         self.image_viewer.set_crop_mode(False)

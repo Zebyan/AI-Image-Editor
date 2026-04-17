@@ -1,4 +1,4 @@
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QHBoxLayout,
     QDoubleSpinBox,
+    QSlider,
 )
 
 
@@ -22,6 +23,7 @@ class ControlPanel(QWidget):
     flip_requested = Signal(str)
     crop_apply_requested = Signal()
     crop_cancel_requested = Signal()
+    brightness_contrast_requested = Signal(int, int)
 
     def __init__(self) -> None:
         super().__init__()
@@ -47,12 +49,14 @@ class ControlPanel(QWidget):
         self.rotate_page = self._build_rotate_page()
         self.flip_page = self._build_flip_page()
         self.crop_page = self._build_crop_page()
+        self.brightness_contrast_page = self._build_brightness_contrast_page()
 
-        self.stack.addWidget(self.empty_page)   # 0
-        self.stack.addWidget(self.resize_page)  # 1
-        self.stack.addWidget(self.rotate_page)  # 2
-        self.stack.addWidget(self.flip_page)    # 3
-        self.stack.addWidget(self.crop_page)    # 4
+        self.stack.addWidget(self.empty_page)                 # 0
+        self.stack.addWidget(self.resize_page)                # 1
+        self.stack.addWidget(self.rotate_page)                # 2
+        self.stack.addWidget(self.flip_page)                  # 3
+        self.stack.addWidget(self.crop_page)                  # 4
+        self.stack.addWidget(self.brightness_contrast_page)   # 5
 
         self.layout.addWidget(self.title)
         self.layout.addWidget(self.description)
@@ -253,6 +257,68 @@ class ControlPanel(QWidget):
         page.setLayout(layout)
         return page
 
+    def _build_brightness_contrast_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+
+        description = QLabel(
+            "Adjust brightness and contrast of the image. "
+            "Brightness shifts pixel values. Contrast scales them."
+        )
+        description.setWordWrap(True)
+
+        brightness_label = QLabel("Brightness")
+        self.brightness_slider = QSlider(Qt.Orientation.Horizontal)
+        self.brightness_slider.setRange(-100, 100)
+        self.brightness_slider.setValue(0)
+        self.brightness_value_label = QLabel("0")
+
+        contrast_label = QLabel("Contrast")
+        self.contrast_slider = QSlider(Qt.Orientation.Horizontal)
+        self.contrast_slider.setRange(-100, 100)
+        self.contrast_slider.setValue(0)
+        self.contrast_value_label = QLabel("0")
+
+        self.brightness_slider.valueChanged.connect(
+            lambda value: self.brightness_value_label.setText(str(value))
+        )
+        self.contrast_slider.valueChanged.connect(
+            lambda value: self.contrast_value_label.setText(str(value))
+        )
+
+        brightness_row = QHBoxLayout()
+        brightness_row.addWidget(self.brightness_slider)
+        brightness_row.addWidget(self.brightness_value_label)
+
+        contrast_row = QHBoxLayout()
+        contrast_row.addWidget(self.contrast_slider)
+        contrast_row.addWidget(self.contrast_value_label)
+
+        button_row = QHBoxLayout()
+        self.brightness_contrast_apply_button = QPushButton("Apply Adjustment")
+        self.brightness_contrast_reset_button = QPushButton("Reset Fields")
+
+        self.brightness_contrast_apply_button.clicked.connect(
+            self._emit_brightness_contrast_requested
+        )
+        self.brightness_contrast_reset_button.clicked.connect(
+            self._reset_brightness_contrast_fields
+        )
+
+        button_row.addWidget(self.brightness_contrast_apply_button)
+        button_row.addWidget(self.brightness_contrast_reset_button)
+
+        layout.addWidget(description)
+        layout.addWidget(brightness_label)
+        layout.addLayout(brightness_row)
+        layout.addWidget(contrast_label)
+        layout.addLayout(contrast_row)
+        layout.addLayout(button_row)
+        layout.addStretch()
+
+        page.setLayout(layout)
+        return page
+
     def show_module(self, module_name: str) -> None:
         self.current_module = module_name
         self.title.setText(module_name)
@@ -353,6 +419,10 @@ class ControlPanel(QWidget):
             self.crop_selection_info.setText("No crop selected")
             self.crop_apply_button.setEnabled(False)
 
+    def current_tool_name(self) -> str:
+        item = self.tool_list.currentItem()
+        return item.text() if item else ""
+
     def _on_tool_changed(self, tool_name: str) -> None:
         if self.current_module != "Edit":
             self.stack.setCurrentIndex(0)
@@ -366,12 +436,10 @@ class ControlPanel(QWidget):
             self.stack.setCurrentIndex(3)
         elif tool_name == "Crop":
             self.stack.setCurrentIndex(4)
+        elif tool_name == "Brightness / Contrast":
+            self.stack.setCurrentIndex(5)
         else:
             self.stack.setCurrentIndex(0)
-
-    def current_tool_name(self) -> str:
-        item = self.tool_list.currentItem()
-        return item.text() if item else ""
 
     def _on_width_changed(self, new_width: int) -> None:
         if not self.keep_aspect_checkbox.isChecked():
@@ -424,3 +492,12 @@ class ControlPanel(QWidget):
         self.rotate_angle_spin.setValue(0.0)
         self.rotate_interpolation_combo.setCurrentText("Bilinear")
         self.expand_canvas_checkbox.setChecked(True)
+
+    def _emit_brightness_contrast_requested(self) -> None:
+        brightness = self.brightness_slider.value()
+        contrast = self.contrast_slider.value()
+        self.brightness_contrast_requested.emit(brightness, contrast)
+
+    def _reset_brightness_contrast_fields(self) -> None:
+        self.brightness_slider.setValue(0)
+        self.contrast_slider.setValue(0)
