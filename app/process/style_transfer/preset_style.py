@@ -2,15 +2,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import torch
 from torchvision import transforms
 from PySide6.QtGui import QPixmap
 
-from app.utils.convert import qpixmap_to_numpy, numpy_to_qpixmap
 from app.process.style_transfer.style_model import PRESET_MODEL_PATHS
-
-# IMPORTANT:
-# Change this import so it points to your model definition location
+from app.utils.convert import numpy_to_qpixmap, qpixmap_to_numpy
 from training.style_transfer.transformer_net import TransformerNet
 
 
@@ -45,13 +43,11 @@ def _load_model(style_name: str) -> tuple[TransformerNet, torch.device]:
     return model, device
 
 
-def apply_preset_style(pixmap: QPixmap, style_name: str, strength: int) -> QPixmap:
-    if pixmap.isNull():
-        return QPixmap()
+def apply_preset_style_array(image: np.ndarray, style_name: str, strength: int) -> np.ndarray:
+    if image.ndim != 3 or image.shape[2] not in (3, 4):
+        raise ValueError("Expected image array with 3 or 4 channels")
 
     model, device = _load_model(style_name)
-
-    image = qpixmap_to_numpy(pixmap)
 
     if image.shape[2] == 4:
         rgb = image[:, :, :3]
@@ -66,23 +62,28 @@ def apply_preset_style(pixmap: QPixmap, style_name: str, strength: int) -> QPixm
         stylized = model(tensor)
         stylized = torch.clamp(stylized, 0.0, 1.0)
 
-    stylized_np = (
-        stylized.squeeze(0)
-        .permute(1, 2, 0)
-        .cpu()
-        .numpy()
-    )
+    stylized_np = stylized.squeeze(0).permute(1, 2, 0).cpu().numpy()
     stylized_np = (stylized_np * 255.0).clip(0, 255).astype("uint8")
 
     alpha_blend = max(0.0, min(1.0, strength / 100.0))
-    blended = (rgb.astype("float32") * (1.0 - alpha_blend) +
-               stylized_np.astype("float32") * alpha_blend)
+    blended = (
+        rgb.astype("float32") * (1.0 - alpha_blend)
+        + stylized_np.astype("float32") * alpha_blend
+    )
     blended = blended.clip(0, 255).astype("uint8")
 
     if alpha is not None:
-        import numpy as np
         result = np.concatenate([blended, alpha], axis=2)
     else:
         result = blended
 
+    return result
+
+
+def apply_preset_style(pixmap: QPixmap, style_name: str, strength: int) -> QPixmap:
+    if pixmap.isNull():
+        return QPixmap()
+
+    image = qpixmap_to_numpy(pixmap)
+    result = apply_preset_style_array(image, style_name, strength)
     return numpy_to_qpixmap(result)

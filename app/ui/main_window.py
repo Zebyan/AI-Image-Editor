@@ -34,7 +34,14 @@ from app.ui.control_panel import ControlPanel
 from app.ui.image_viewer import ImageViewer
 from app.ui.sidebar import Sidebar
 from app.process.style_transfer.preset_style import apply_preset_style
-
+import numpy as np
+from PySide6.QtCore import Qt, QThread
+from app.ui.loading_dialog import LoadingDialog
+from app.workers.task_worker import TaskWorker
+from app.utils.convert import qpixmap_to_numpy, numpy_to_qpixmap
+from app.process.gif.gif import generate_gif_frames_from_array, save_gif
+from app.process.style_transfer.preset_style import apply_preset_style_array
+from app.ui.gif_window import GifPreviewDialog
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
@@ -101,6 +108,21 @@ class MainWindow(QMainWindow):
         self.control_panel.draw_brush_changed.connect(self.update_draw_brush)
         self.control_panel.draw_apply_requested.connect(self.apply_drawing)
         self.control_panel.draw_cancel_requested.connect(self.cancel_drawing)
+
+        self.control_panel.style_preset_requested.connect(self.apply_style_preset_ui)
+        self.control_panel.style_custom_image_requested.connect(self.load_style_custom_image)
+        self.control_panel.style_custom_requested.connect(self.apply_style_custom_ui)
+
+        self.loading_dialog = LoadingDialog(parent=self)
+        self._worker_thread: QThread | None = None
+        self._worker: TaskWorker | None = None
+        self._generated_gif_frames = []
+        self._generated_gif_duration_ms = 80
+        self._style_custom_image_path: str | None = None
+        self._style_custom_pixmap = None
+
+        self.control_panel.gif_generate_requested.connect(self.generate_gif)
+        self.control_panel.gif_save_requested.connect(self.save_generated_gif)
 
         self.control_panel.style_preset_requested.connect(self.apply_style_preset_ui)
         self.control_panel.style_custom_image_requested.connect(self.load_style_custom_image)
@@ -651,25 +673,37 @@ class MainWindow(QMainWindow):
 
         current = self.app_state.current_pixmap
         if current is None or current.isNull():
-            QMessageBox.warning(self, "No Image", "Load an image first.")
             return
 
-        frames = generate_gif_frames(
-            current,
-            effect=effect,
-            frame_count=frame_count,
-            max_zoom=max_zoom,
-            pan_pixels=pan_pixels,
-            blur_strength=blur_strength,
+        image_array = qpixmap_to_numpy(current)
+
+        self._generated_gif_duration_ms = duration_ms
+
+        self.run_in_background(
+            generate_gif_frames_from_array,
+            lambda frames: self._on_gif_generated(frames, effect, frame_count, duration_ms),
+            f"Generating GIF: {effect}...",
+            image_array,
+            effect,
+            frame_count,
+            max_zoom,
+            pan_pixels,
+            blur_strength,
         )
 
+    def _on_gif_generated(
+        self,
+        frames,
+        effect: str,
+        frame_count: int,
+        duration_ms: int,
+    ) -> None:
         if not frames:
             QMessageBox.warning(self, "GIF Failed", "Failed to generate GIF frames.")
             self.control_panel.set_gif_ready(False, "GIF generation failed.")
             return
 
         self._generated_gif_frames = frames
-        self._generated_gif_duration_ms = duration_ms
 
         total_frames = len(frames)
         self.control_panel.set_gif_ready(
@@ -772,16 +806,19 @@ class MainWindow(QMainWindow):
         if current is None or current.isNull():
             return
 
-        try:
-            styled = apply_preset_style(current, preset_name, strength)
-        except Exception as exc:
-            QMessageBox.critical(
-                self,
-                "Style Transfer Error",
-                f"Failed to apply preset style.\n{exc}",
-            )
-            self.logger.error("Preset style transfer failed: %s", exc)
-            return
+        image_array = qpixmap_to_numpy(current)
+
+        self.run_in_background(
+            apply_preset_style_array,
+            lambda result: self._on_style_preset_finished(result, preset_name, strength),
+            f"Applying preset style: {preset_name}...",
+            image_array,
+            preset_name,
+            strength,
+        )
+
+    def _on_style_preset_finished(self, result: np.ndarray, preset_name: str, strength: int) -> None:
+        styled = numpy_to_qpixmap(result)
 
         if styled.isNull():
             QMessageBox.warning(self, "Style Transfer Failed", "Failed to create stylized image.")
@@ -834,3 +871,61 @@ class MainWindow(QMainWindow):
             self._style_custom_image_path,
             strength,
         )
+
+    def show_loading(self, message: str) -> None:
+        self.loading_dialog.set_message(message)
+        self.loading_dialog.show()
+        self.loading_dialog.raise_()
+        self.loading_dialog.activateWindow()
+
+
+    def hide_loading(self) -> None:
+        self.loading_dialog.hide()
+
+
+    def run_in_background(
+        self,
+        fn,
+        on_success,
+        loading_message: str,
+        *args,
+        **kwargs,
+    ) -> None:
+        if self._worker_thread is not None:
+            QMessageBox.warning(self, "Busy", "Another task is already running.")
+            return
+
+        self.show_loading(loading_message)
+
+        self._worker_thread = QThread()
+        self._worker = TaskWorker(fn, *args, **kwargs)
+        self._worker.moveToThread(self._worker_thread)
+
+        self._worker_thread.started.connect(self._worker.run)
+
+        self._worker.finished.connect(self._worker_thread.quit)
+        self._worker.finished.connect(self._worker.deleteLater)
+        self._worker_thread.finished.connect(self._worker_thread.deleteLater)
+
+        self._worker.error.connect(self._worker_thread.quit)
+        self._worker.error.connect(self._worker.deleteLater)
+
+        self._worker.finished.connect(lambda result: self._handle_worker_success(result, on_success))
+        self._worker.error.connect(self._handle_worker_error)
+
+        self._worker_thread.start()
+
+
+    def _handle_worker_success(self, result, callback) -> None:
+        self.hide_loading()
+        callback(result)
+        self._worker = None
+        self._worker_thread = None
+
+
+    def _handle_worker_error(self, message: str) -> None:
+        self.hide_loading()
+        QMessageBox.critical(self, "Processing Error", message)
+        self.logger.error("Background task failed: %s", message)
+        self._worker = None
+        self._worker_thread = None

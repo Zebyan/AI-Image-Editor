@@ -74,23 +74,18 @@ def _build_blur_frame(image: np.ndarray, strength: int) -> np.ndarray:
     return np.concatenate([blurred_rgb, alpha], axis=2)
 
 
-def generate_gif_frames(
-    pixmap: QPixmap,
+def generate_gif_frames_from_array(
+    image: np.ndarray,
     effect: GifEffect,
     frame_count: int,
     max_zoom: float = 1.15,
     pan_pixels: int = 30,
     blur_strength: int = 4,
 ) -> list[Image.Image]:
-    if pixmap.isNull():
-        return []
-
-    frame_count = _safe_frame_count(frame_count)
-    image = qpixmap_to_numpy(pixmap)
-
     if image.ndim != 3 or image.shape[2] != 4:
         return []
 
+    frame_count = _safe_frame_count(frame_count)
     frames_np: list[np.ndarray] = []
 
     if effect == "Zoom Loop":
@@ -115,6 +110,28 @@ def generate_gif_frames(
         return []
 
     return [_numpy_rgba_to_pil(frame) for frame in frames_np]
+
+
+def generate_gif_frames(
+    pixmap: QPixmap,
+    effect: GifEffect,
+    frame_count: int,
+    max_zoom: float = 1.15,
+    pan_pixels: int = 30,
+    blur_strength: int = 4,
+) -> list[Image.Image]:
+    if pixmap.isNull():
+        return []
+
+    image = qpixmap_to_numpy(pixmap)
+    return generate_gif_frames_from_array(
+        image=image,
+        effect=effect,
+        frame_count=frame_count,
+        max_zoom=max_zoom,
+        pan_pixels=pan_pixels,
+        blur_strength=blur_strength,
+    )
 
 
 def save_gif(frames: list[Image.Image], output_path: str, duration_ms: int) -> None:

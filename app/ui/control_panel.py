@@ -73,10 +73,9 @@ class ControlPanel(QWidget):
         self.draw_page = self._build_draw_page()
 
         self.gif_page = self._build_gif_page()
-
         self.style_transfer_page = self._build_style_transfer_page()
         self.generative_ai_page = self._build_placeholder_page(
-            "Generative AI tools will appear here.\nYou will enter a prompt and generate an image."
+            "Generative AI tools will appear here."
         )
 
         self.stack.addWidget(self.empty_page)                 # 0
@@ -240,8 +239,7 @@ class ControlPanel(QWidget):
         layout = QVBoxLayout()
 
         description = QLabel(
-            "Flip mirrors the image across an axis. "
-            "Choose horizontal, vertical, or both."
+            "Flip mirrors the image across an axis. Choose horizontal, vertical, or both."
         )
         description.setWordWrap(True)
 
@@ -305,8 +303,7 @@ class ControlPanel(QWidget):
         layout = QVBoxLayout()
 
         description = QLabel(
-            "Adjust brightness and contrast of the image. "
-            "Brightness shifts pixel values. Contrast scales them."
+            "Adjust brightness and contrast of the image. Brightness shifts pixel values. Contrast scales them."
         )
         description.setWordWrap(True)
 
@@ -367,8 +364,7 @@ class ControlPanel(QWidget):
         layout = QVBoxLayout()
 
         description = QLabel(
-            "Gaussian blur softens detail by averaging nearby pixels "
-            "with distance-based weights."
+            "Gaussian blur softens detail by averaging nearby pixels with distance-based weights."
         )
         description.setWordWrap(True)
 
@@ -410,8 +406,7 @@ class ControlPanel(QWidget):
         layout = QVBoxLayout()
 
         description = QLabel(
-            "Draw directly on the image using a brush. "
-            "Choose size and color, then start drawing."
+            "Draw directly on the image using a brush. Choose size and color, then start drawing."
         )
         description.setWordWrap(True)
 
@@ -468,200 +463,6 @@ class ControlPanel(QWidget):
 
         page.setLayout(layout)
         return page
-
-    def show_module(self, module_name: str) -> None:
-        self.current_module = module_name
-        self.title.setText(module_name)
-        self.tool_list.clear()
-        self.stack.setCurrentIndex(0)
-
-        if module_name == "Edit":
-            self.description.setText("Core image editing tools.")
-            tools = [
-                "Resize",
-                "Rotate",
-                "Flip",
-                "Crop",
-                "Brightness / Contrast",
-                "Blur",
-                "Draw",
-            ]
-        elif module_name == "GIF":
-            self.description.setText("Create an animated GIF from the current image.")
-            tools = [
-                "Animated GIF",
-            ]
-        elif module_name == "Style Transfer":
-            self.description.setText("Apply the style of another image to the current image.")
-            tools = [
-                "Apply Style Image",
-            ]
-        elif module_name == "Generative AI":
-            self.description.setText("Generate an image from text.")
-            tools = [
-                "Text to Image",
-            ]
-        else:
-            self.description.setText("Select a module to see tools.")
-            tools = []
-
-        for tool in tools:
-            QListWidgetItem(tool, self.tool_list)
-
-        if self.tool_list.count() > 0:
-            self.tool_list.setCurrentRow(0)
-
-    def set_resize_source_dimensions(self, width: int, height: int) -> None:
-        self._original_resize_width = width
-        self._original_resize_height = height
-
-        self.resize_width_spin.blockSignals(True)
-        self.resize_height_spin.blockSignals(True)
-
-        self.resize_width_spin.setValue(width)
-        self.resize_height_spin.setValue(height)
-
-        self.resize_width_spin.blockSignals(False)
-        self.resize_height_spin.blockSignals(False)
-
-    def set_crop_selection_info(
-        self,
-        has_selection: bool,
-        x: int = 0,
-        y: int = 0,
-        width: int = 0,
-        height: int = 0,
-    ) -> None:
-        if has_selection:
-            self.crop_selection_info.setText(
-                f"Crop: x={x}, y={y}, width={width}, height={height}"
-            )
-            self.crop_apply_button.setEnabled(True)
-        else:
-            self.crop_selection_info.setText("No crop selected")
-            self.crop_apply_button.setEnabled(False)
-
-    def set_draw_mode_state(self, enabled: bool) -> None:
-        self.draw_toggle_button.blockSignals(True)
-        self.draw_toggle_button.setChecked(enabled)
-        self.draw_toggle_button.setText("Stop Drawing" if enabled else "Start Drawing")
-        self.draw_toggle_button.blockSignals(False)
-
-    def current_tool_name(self) -> str:
-        item = self.tool_list.currentItem()
-        return item.text() if item else ""
-
-    def _on_tool_changed(self, tool_name: str) -> None:
-        if self.current_module == "Edit":
-            if tool_name == "Resize":
-                self.stack.setCurrentIndex(1)
-            elif tool_name == "Rotate":
-                self.stack.setCurrentIndex(2)
-            elif tool_name == "Flip":
-                self.stack.setCurrentIndex(3)
-            elif tool_name == "Crop":
-                self.stack.setCurrentIndex(4)
-            elif tool_name == "Brightness / Contrast":
-                self.stack.setCurrentIndex(5)
-            elif tool_name == "Blur":
-                self.stack.setCurrentIndex(6)
-            elif tool_name == "Draw":
-                self.stack.setCurrentIndex(7)
-            else:
-                self.stack.setCurrentIndex(0)
-        elif self.current_module == "GIF":
-            self.stack.setCurrentIndex(8)
-        elif self.current_module == "Style Transfer":
-            self.stack.setCurrentIndex(9)
-        elif self.current_module == "Generative AI":
-            self.stack.setCurrentIndex(10)
-        else:
-            self.stack.setCurrentIndex(0)
-
-    def _on_width_changed(self, new_width: int) -> None:
-        if not self.keep_aspect_checkbox.isChecked():
-            return
-
-        if not self._original_resize_width or not self._original_resize_height:
-            return
-
-        ratio = self._original_resize_height / self._original_resize_width
-        new_height = max(1, round(new_width * ratio))
-
-        self.resize_height_spin.blockSignals(True)
-        self.resize_height_spin.setValue(new_height)
-        self.resize_height_spin.blockSignals(False)
-
-    def _on_height_changed(self, new_height: int) -> None:
-        if not self.keep_aspect_checkbox.isChecked():
-            return
-
-        if not self._original_resize_width or not self._original_resize_height:
-            return
-
-        ratio = self._original_resize_width / self._original_resize_height
-        new_width = max(1, round(new_height * ratio))
-
-        self.resize_width_spin.blockSignals(True)
-        self.resize_width_spin.setValue(new_width)
-        self.resize_width_spin.blockSignals(False)
-
-    def _emit_resize_requested(self) -> None:
-        width = self.resize_width_spin.value()
-        height = self.resize_height_spin.value()
-        interpolation = self.resize_interpolation_combo.currentText()
-        self.resize_requested.emit(width, height, interpolation)
-
-    def _reset_resize_fields(self) -> None:
-        if self._original_resize_width and self._original_resize_height:
-            self.set_resize_source_dimensions(
-                self._original_resize_width,
-                self._original_resize_height,
-            )
-
-    def _emit_rotate_requested(self) -> None:
-        angle = self.rotate_angle_spin.value()
-        interpolation = self.rotate_interpolation_combo.currentText()
-        expand_canvas = self.expand_canvas_checkbox.isChecked()
-        self.rotate_requested.emit(angle, interpolation, expand_canvas)
-
-    def _reset_rotate_fields(self) -> None:
-        self.rotate_angle_spin.setValue(0.0)
-        self.rotate_interpolation_combo.setCurrentText("Bilinear")
-        self.expand_canvas_checkbox.setChecked(True)
-
-    def _emit_brightness_contrast_requested(self) -> None:
-        brightness = self.brightness_slider.value()
-        contrast = self.contrast_slider.value()
-        self.brightness_contrast_requested.emit(brightness, contrast)
-
-    def _reset_brightness_contrast_fields(self) -> None:
-        self.brightness_slider.setValue(0)
-        self.contrast_slider.setValue(0)
-
-    def _emit_blur_requested(self) -> None:
-        self.blur_requested.emit(self.blur_slider.value())
-
-    def _reset_blur_fields(self) -> None:
-        self.blur_slider.setValue(0)
-
-    def _choose_draw_color(self) -> None:
-        color = QColorDialog.getColor(self._draw_color, self, "Select Brush Color")
-        if not color.isValid():
-            return
-
-        self._draw_color = color
-        self.draw_color_preview.setStyleSheet(
-            f"background-color: {color.name()}; border: 1px solid #888;"
-        )
-        self._emit_draw_brush_changed()
-
-    def _emit_draw_brush_changed(self) -> None:
-        self.draw_brush_changed.emit(self.draw_size_slider.value(), self._draw_color)
-
-    def _on_draw_toggled(self, checked: bool) -> None:
-        self.draw_toggle_button.setText("Stop Drawing" if checked else "Start Drawing")
-        self.draw_mode_toggled.emit(checked)
 
     def _build_gif_page(self) -> QWidget:
         page = QWidget()
@@ -725,22 +526,7 @@ class ControlPanel(QWidget):
 
         page.setLayout(layout)
         return page
-    
-    def _emit_gif_generate_requested(self) -> None:
-        self.gif_generate_requested.emit(
-            self.gif_effect_combo.currentText(),
-            self.gif_frame_count_spin.value(),
-            self.gif_max_zoom_spin.value(),
-            self.gif_pan_pixels_spin.value(),
-            self.gif_blur_strength_spin.value(),
-            self.gif_duration_spin.value(),
-        )
 
-
-    def set_gif_ready(self, ready: bool, message: str) -> None:
-        self.gif_save_button.setEnabled(ready)
-        self.gif_status_label.setText(message)
-    
     def _build_style_transfer_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout()
@@ -753,12 +539,11 @@ class ControlPanel(QWidget):
 
         self.style_transfer_stack = QStackedWidget()
 
-        # Preset page
         preset_page = QWidget()
         preset_layout = QVBoxLayout()
 
         preset_description = QLabel(
-            "Choose a predefined style and apply it to the current image."
+            "Choose a predefined artistic style and apply it to the current image."
         )
         preset_description.setWordWrap(True)
 
@@ -768,8 +553,6 @@ class ControlPanel(QWidget):
         self.style_preset_combo.addItems([
             "Van Gogh",
             "Mosaic",
-            "Candy",
-            "Udnie",
             "Sketch",
         ])
 
@@ -798,7 +581,6 @@ class ControlPanel(QWidget):
         preset_layout.addStretch()
         preset_page.setLayout(preset_layout)
 
-        # Custom page
         custom_page = QWidget()
         custom_layout = QVBoxLayout()
 
@@ -853,21 +635,89 @@ class ControlPanel(QWidget):
         layout.addWidget(self.style_transfer_tool_list)
         layout.addWidget(self.style_transfer_stack)
         page.setLayout(layout)
-
         return page
-    
-    def _emit_style_preset_requested(self) -> None:
-        self.style_preset_requested.emit(
-            self.style_preset_combo.currentText(),
-            self.style_preset_strength_slider.value(),
-        )
 
+    def show_module(self, module_name: str) -> None:
+        self.current_module = module_name
+        self.title.setText(module_name)
+        self.tool_list.clear()
+        self.stack.setCurrentIndex(0)
 
-    def _emit_style_custom_requested(self) -> None:
-        self.style_custom_requested.emit(
-            self.style_custom_strength_slider.value(),
-        )
+        if module_name == "Edit":
+            self.description.setText("Core image editing tools.")
+            tools = [
+                "Resize",
+                "Rotate",
+                "Flip",
+                "Crop",
+                "Brightness / Contrast",
+                "Blur",
+                "Draw",
+            ]
+        elif module_name == "GIF":
+            self.description.setText("Create an animated GIF from the current image.")
+            tools = [
+                "Animation Builder",
+            ]
+        elif module_name == "Style Transfer":
+            self.description.setText("Apply the style of another image to the current image.")
+            tools = [
+                "Style Transfer",
+            ]
+        elif module_name == "Generative AI":
+            self.description.setText("Generate an image from text.")
+            tools = [
+                "Text to Image",
+            ]
+        else:
+            self.description.setText("Select a module to see tools.")
+            tools = []
 
+        for tool in tools:
+            QListWidgetItem(tool, self.tool_list)
+
+        if self.tool_list.count() > 0:
+            self.tool_list.setCurrentRow(0)
+
+    def set_resize_source_dimensions(self, width: int, height: int) -> None:
+        self._original_resize_width = width
+        self._original_resize_height = height
+
+        self.resize_width_spin.blockSignals(True)
+        self.resize_height_spin.blockSignals(True)
+
+        self.resize_width_spin.setValue(width)
+        self.resize_height_spin.setValue(height)
+
+        self.resize_width_spin.blockSignals(False)
+        self.resize_height_spin.blockSignals(False)
+
+    def set_crop_selection_info(
+        self,
+        has_selection: bool,
+        x: int = 0,
+        y: int = 0,
+        width: int = 0,
+        height: int = 0,
+    ) -> None:
+        if has_selection:
+            self.crop_selection_info.setText(
+                f"Crop: x={x}, y={y}, width={width}, height={height}"
+            )
+            self.crop_apply_button.setEnabled(True)
+        else:
+            self.crop_selection_info.setText("No crop selected")
+            self.crop_apply_button.setEnabled(False)
+
+    def set_draw_mode_state(self, enabled: bool) -> None:
+        self.draw_toggle_button.blockSignals(True)
+        self.draw_toggle_button.setChecked(enabled)
+        self.draw_toggle_button.setText("Stop Drawing" if enabled else "Start Drawing")
+        self.draw_toggle_button.blockSignals(False)
+
+    def set_gif_ready(self, ready: bool, message: str) -> None:
+        self.gif_save_button.setEnabled(ready)
+        self.gif_status_label.setText(message)
 
     def set_style_custom_image_path(self, path: str | None) -> None:
         if path:
@@ -876,3 +726,143 @@ class ControlPanel(QWidget):
         else:
             self.style_custom_path_label.setText("No style image selected")
             self.style_custom_apply_button.setEnabled(False)
+
+    def current_tool_name(self) -> str:
+        item = self.tool_list.currentItem()
+        return item.text() if item else ""
+
+    def _on_tool_changed(self, tool_name: str) -> None:
+        if self.current_module == "Edit":
+            if tool_name == "Resize":
+                self.stack.setCurrentIndex(1)
+            elif tool_name == "Rotate":
+                self.stack.setCurrentIndex(2)
+            elif tool_name == "Flip":
+                self.stack.setCurrentIndex(3)
+            elif tool_name == "Crop":
+                self.stack.setCurrentIndex(4)
+            elif tool_name == "Brightness / Contrast":
+                self.stack.setCurrentIndex(5)
+            elif tool_name == "Blur":
+                self.stack.setCurrentIndex(6)
+            elif tool_name == "Draw":
+                self.stack.setCurrentIndex(7)
+            else:
+                self.stack.setCurrentIndex(0)
+        elif self.current_module == "GIF":
+            self.stack.setCurrentIndex(8)
+        elif self.current_module == "Style Transfer":
+            self.stack.setCurrentIndex(9)
+        elif self.current_module == "Generative AI":
+            self.stack.setCurrentIndex(10)
+        else:
+            self.stack.setCurrentIndex(0)
+
+    def _on_width_changed(self, new_width: int) -> None:
+        if not self.keep_aspect_checkbox.isChecked():
+            return
+
+        if not self._original_resize_width or not self._original_resize_height:
+            return
+
+        ratio = self._original_resize_height / self._original_resize_width
+        new_height = max(1, round(new_width * ratio))
+
+        self.resize_height_spin.blockSignals(True)
+        self.resize_height_spin.setValue(new_height)
+        self.resize_height_spin.blockSignals(False)
+
+    def _on_height_changed(self, new_height: int) -> None:
+        if not self.keep_aspect_checkbox.isChecked():
+            return
+
+        if not self._original_resize_width or not self._original_resize_height:
+            return
+
+        ratio = self._original_resize_width / self._original_resize_height
+        new_width = max(1, round(new_height * ratio))
+
+        self.resize_width_spin.blockSignals(True)
+        self.resize_width_spin.setValue(new_width)
+        self.resize_width_spin.blockSignals(False)
+
+    def _emit_resize_requested(self) -> None:
+        self.resize_requested.emit(
+            self.resize_width_spin.value(),
+            self.resize_height_spin.value(),
+            self.resize_interpolation_combo.currentText(),
+        )
+
+    def _reset_resize_fields(self) -> None:
+        if self._original_resize_width and self._original_resize_height:
+            self.set_resize_source_dimensions(
+                self._original_resize_width,
+                self._original_resize_height,
+            )
+
+    def _emit_rotate_requested(self) -> None:
+        self.rotate_requested.emit(
+            self.rotate_angle_spin.value(),
+            self.rotate_interpolation_combo.currentText(),
+            self.expand_canvas_checkbox.isChecked(),
+        )
+
+    def _reset_rotate_fields(self) -> None:
+        self.rotate_angle_spin.setValue(0.0)
+        self.rotate_interpolation_combo.setCurrentText("Bilinear")
+        self.expand_canvas_checkbox.setChecked(True)
+
+    def _emit_brightness_contrast_requested(self) -> None:
+        self.brightness_contrast_requested.emit(
+            self.brightness_slider.value(),
+            self.contrast_slider.value(),
+        )
+
+    def _reset_brightness_contrast_fields(self) -> None:
+        self.brightness_slider.setValue(0)
+        self.contrast_slider.setValue(0)
+
+    def _emit_blur_requested(self) -> None:
+        self.blur_requested.emit(self.blur_slider.value())
+
+    def _reset_blur_fields(self) -> None:
+        self.blur_slider.setValue(0)
+
+    def _choose_draw_color(self) -> None:
+        color = QColorDialog.getColor(self._draw_color, self, "Select Brush Color")
+        if not color.isValid():
+            return
+
+        self._draw_color = color
+        self.draw_color_preview.setStyleSheet(
+            f"background-color: {color.name()}; border: 1px solid #888;"
+        )
+        self._emit_draw_brush_changed()
+
+    def _emit_draw_brush_changed(self) -> None:
+        self.draw_brush_changed.emit(self.draw_size_slider.value(), self._draw_color)
+
+    def _on_draw_toggled(self, checked: bool) -> None:
+        self.draw_toggle_button.setText("Stop Drawing" if checked else "Start Drawing")
+        self.draw_mode_toggled.emit(checked)
+
+    def _emit_gif_generate_requested(self) -> None:
+        self.gif_generate_requested.emit(
+            self.gif_effect_combo.currentText(),
+            self.gif_frame_count_spin.value(),
+            self.gif_max_zoom_spin.value(),
+            self.gif_pan_pixels_spin.value(),
+            self.gif_blur_strength_spin.value(),
+            self.gif_duration_spin.value(),
+        )
+
+    def _emit_style_preset_requested(self) -> None:
+        self.style_preset_requested.emit(
+            self.style_preset_combo.currentText(),
+            self.style_preset_strength_slider.value(),
+        )
+
+    def _emit_style_custom_requested(self) -> None:
+        self.style_custom_requested.emit(
+            self.style_custom_strength_slider.value(),
+        )
