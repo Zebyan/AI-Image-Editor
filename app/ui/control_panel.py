@@ -24,6 +24,7 @@ class ControlPanel(QWidget):
     crop_apply_requested = Signal()
     crop_cancel_requested = Signal()
     brightness_contrast_requested = Signal(int, int)
+    blur_requested = Signal(int)
 
     def __init__(self) -> None:
         super().__init__()
@@ -50,6 +51,7 @@ class ControlPanel(QWidget):
         self.flip_page = self._build_flip_page()
         self.crop_page = self._build_crop_page()
         self.brightness_contrast_page = self._build_brightness_contrast_page()
+        self.blur_page = self._build_blur_page()
 
         self.stack.addWidget(self.empty_page)                 # 0
         self.stack.addWidget(self.resize_page)                # 1
@@ -57,6 +59,7 @@ class ControlPanel(QWidget):
         self.stack.addWidget(self.flip_page)                  # 3
         self.stack.addWidget(self.crop_page)                  # 4
         self.stack.addWidget(self.brightness_contrast_page)   # 5
+        self.stack.addWidget(self.blur_page)                  # 6
 
         self.layout.addWidget(self.title)
         self.layout.addWidget(self.description)
@@ -319,6 +322,49 @@ class ControlPanel(QWidget):
         page.setLayout(layout)
         return page
 
+    def _build_blur_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+
+        description = QLabel(
+            "Gaussian blur softens detail by averaging nearby pixels "
+            "with distance-based weights."
+        )
+        description.setWordWrap(True)
+
+        strength_label = QLabel("Blur Strength")
+        self.blur_slider = QSlider(Qt.Orientation.Horizontal)
+        self.blur_slider.setRange(0, 20)
+        self.blur_slider.setValue(0)
+        self.blur_value_label = QLabel("0")
+
+        self.blur_slider.valueChanged.connect(
+            lambda value: self.blur_value_label.setText(str(value))
+        )
+
+        blur_row = QHBoxLayout()
+        blur_row.addWidget(self.blur_slider)
+        blur_row.addWidget(self.blur_value_label)
+
+        button_row = QHBoxLayout()
+        self.blur_apply_button = QPushButton("Apply Blur")
+        self.blur_reset_button = QPushButton("Reset Fields")
+
+        self.blur_apply_button.clicked.connect(self._emit_blur_requested)
+        self.blur_reset_button.clicked.connect(self._reset_blur_fields)
+
+        button_row.addWidget(self.blur_apply_button)
+        button_row.addWidget(self.blur_reset_button)
+
+        layout.addWidget(description)
+        layout.addWidget(strength_label)
+        layout.addLayout(blur_row)
+        layout.addLayout(button_row)
+        layout.addStretch()
+
+        page.setLayout(layout)
+        return page
+
     def show_module(self, module_name: str) -> None:
         self.current_module = module_name
         self.title.setText(module_name)
@@ -438,6 +484,8 @@ class ControlPanel(QWidget):
             self.stack.setCurrentIndex(4)
         elif tool_name == "Brightness / Contrast":
             self.stack.setCurrentIndex(5)
+        elif tool_name == "Blur":
+            self.stack.setCurrentIndex(6)
         else:
             self.stack.setCurrentIndex(0)
 
@@ -501,3 +549,9 @@ class ControlPanel(QWidget):
     def _reset_brightness_contrast_fields(self) -> None:
         self.brightness_slider.setValue(0)
         self.contrast_slider.setValue(0)
+
+    def _emit_blur_requested(self) -> None:
+        self.blur_requested.emit(self.blur_slider.value())
+
+    def _reset_blur_fields(self) -> None:
+        self.blur_slider.setValue(0)

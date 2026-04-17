@@ -19,6 +19,7 @@ from app.constants import (
     MIN_WINDOW_HEIGHT,
 )
 from app.logger import setup_logger
+from app.process.edit.blur import apply_gaussian_blur
 from app.process.edit.brightness_contrast import (
     adjust_brightness_contrast,
 )
@@ -80,6 +81,7 @@ class MainWindow(QMainWindow):
         self.control_panel.brightness_contrast_requested.connect(
             self.apply_brightness_contrast
         )
+        self.control_panel.blur_requested.connect(self.apply_blur)
         self.control_panel.tool_list.currentTextChanged.connect(
             lambda _: self._sync_crop_mode()
         )
@@ -467,6 +469,37 @@ class MainWindow(QMainWindow):
             "Applied brightness/contrast adjustment: brightness=%s contrast=%s",
             brightness,
             contrast,
+        )
+
+    def apply_blur(self, strength: int) -> None:
+        if not self.app_state.has_image():
+            QMessageBox.warning(self, "No Image", "Load an image first.")
+            return
+
+        current = self.app_state.current_pixmap
+        if current is None or current.isNull():
+            return
+
+        blurred = apply_gaussian_blur(current, strength)
+        if blurred.isNull():
+            QMessageBox.warning(self, "Blur Failed", "Failed to apply blur.")
+            return
+
+        self.app_state.apply_new_current(blurred)
+        self.image_viewer.set_image(blurred)
+        self.control_panel.set_resize_source_dimensions(blurred.width(), blurred.height())
+        self._update_action_states()
+        self._sync_crop_mode()
+
+        kernel_size = 0 if strength <= 0 else 2 * strength + 1
+        self.statusBar().showMessage(
+            f"Applied Gaussian blur with strength={strength} (kernel={kernel_size})",
+            3000,
+        )
+        self.logger.info(
+            "Applied Gaussian blur with strength=%s kernel=%s",
+            strength,
+            kernel_size,
         )
 
     def cancel_crop(self) -> None:
