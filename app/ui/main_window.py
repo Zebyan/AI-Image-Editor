@@ -19,6 +19,7 @@ from app.constants import (
     MIN_WINDOW_HEIGHT,
 )
 from app.logger import setup_logger
+from app.process.edit.flip import flip_pixmap
 from app.process.edit.resize import resize_pixmap
 from app.process.edit.rotate import rotate_pixmap
 from app.services.image_io import is_supported_image, load_pixmap
@@ -66,6 +67,7 @@ class MainWindow(QMainWindow):
         self.sidebar.module_selected.connect(self.on_module_selected)
         self.control_panel.resize_requested.connect(self.apply_resize)
         self.control_panel.rotate_requested.connect(self.apply_rotate)
+        self.control_panel.flip_requested.connect(self.apply_flip)
 
         self.statusBar().showMessage("Ready")
 
@@ -346,6 +348,28 @@ class MainWindow(QMainWindow):
             interpolation,
             expand_canvas,
         )
+
+    def apply_flip(self, direction: str) -> None:
+        if not self.app_state.has_image():
+            QMessageBox.warning(self, "No Image", "Load an image first.")
+            return
+
+        current = self.app_state.current_pixmap
+        if current is None or current.isNull():
+            return
+
+        flipped = flip_pixmap(current, direction)
+        if flipped.isNull():
+            QMessageBox.warning(self, "Flip Failed", "Failed to flip image.")
+            return
+
+        self.app_state.apply_new_current(flipped)
+        self.image_viewer.set_image(flipped)
+        self.control_panel.set_resize_source_dimensions(flipped.width(), flipped.height())
+        self._update_action_states()
+
+        self.statusBar().showMessage(f"Flipped image: {direction}", 3000)
+        self.logger.info("Flipped image: %s", direction)
 
     def on_module_selected(self, module_name: str) -> None:
         self.control_panel.show_module(module_name)

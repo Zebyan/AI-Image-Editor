@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 class ControlPanel(QWidget):
     resize_requested = Signal(int, int, str)
     rotate_requested = Signal(float, str, bool)
+    flip_requested = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -42,10 +43,12 @@ class ControlPanel(QWidget):
         self.empty_page = self._build_empty_page()
         self.resize_page = self._build_resize_page()
         self.rotate_page = self._build_rotate_page()
+        self.flip_page = self._build_flip_page()
 
         self.stack.addWidget(self.empty_page)   # 0
         self.stack.addWidget(self.resize_page)  # 1
         self.stack.addWidget(self.rotate_page)  # 2
+        self.stack.addWidget(self.flip_page)    # 3
 
         self.layout.addWidget(self.title)
         self.layout.addWidget(self.description)
@@ -149,9 +152,15 @@ class ControlPanel(QWidget):
         self.rotate_plus_90_button = QPushButton("+90°")
         self.rotate_180_button = QPushButton("180°")
 
-        self.rotate_minus_90_button.clicked.connect(lambda: self.rotate_angle_spin.setValue(-90.0))
-        self.rotate_plus_90_button.clicked.connect(lambda: self.rotate_angle_spin.setValue(90.0))
-        self.rotate_180_button.clicked.connect(lambda: self.rotate_angle_spin.setValue(180.0))
+        self.rotate_minus_90_button.clicked.connect(
+            lambda: self.rotate_angle_spin.setValue(-90.0)
+        )
+        self.rotate_plus_90_button.clicked.connect(
+            lambda: self.rotate_angle_spin.setValue(90.0)
+        )
+        self.rotate_180_button.clicked.connect(
+            lambda: self.rotate_angle_spin.setValue(180.0)
+        )
 
         quick_row.addWidget(self.rotate_minus_90_button)
         quick_row.addWidget(self.rotate_plus_90_button)
@@ -170,6 +179,39 @@ class ControlPanel(QWidget):
         layout.addLayout(form)
         layout.addLayout(quick_row)
         layout.addLayout(action_row)
+        layout.addStretch()
+
+        page.setLayout(layout)
+        return page
+
+    def _build_flip_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+
+        description = QLabel(
+            "Flip mirrors the image across an axis. "
+            "Choose horizontal, vertical, or both."
+        )
+        description.setWordWrap(True)
+
+        self.flip_horizontal_button = QPushButton("Flip Horizontal")
+        self.flip_vertical_button = QPushButton("Flip Vertical")
+        self.flip_both_button = QPushButton("Flip Both")
+
+        self.flip_horizontal_button.clicked.connect(
+            lambda: self.flip_requested.emit("horizontal")
+        )
+        self.flip_vertical_button.clicked.connect(
+            lambda: self.flip_requested.emit("vertical")
+        )
+        self.flip_both_button.clicked.connect(
+            lambda: self.flip_requested.emit("both")
+        )
+
+        layout.addWidget(description)
+        layout.addWidget(self.flip_horizontal_button)
+        layout.addWidget(self.flip_vertical_button)
+        layout.addWidget(self.flip_both_button)
         layout.addStretch()
 
         page.setLayout(layout)
@@ -267,6 +309,8 @@ class ControlPanel(QWidget):
             self.stack.setCurrentIndex(1)
         elif tool_name == "Rotate":
             self.stack.setCurrentIndex(2)
+        elif tool_name == "Flip":
+            self.stack.setCurrentIndex(3)
         else:
             self.stack.setCurrentIndex(0)
 
