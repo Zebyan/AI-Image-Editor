@@ -71,6 +71,9 @@ class MainWindow(QMainWindow):
         self.image_viewer.crop_selection_changed.connect(
             self.control_panel.set_crop_selection_info
         )
+        self.image_viewer.draw_session_changed.connect(
+            self.control_panel.set_draw_mode_state
+        )
 
         self.sidebar.module_selected.connect(self.on_module_selected)
         self.control_panel.resize_requested.connect(self.apply_resize)
@@ -82,8 +85,14 @@ class MainWindow(QMainWindow):
             self.apply_brightness_contrast
         )
         self.control_panel.blur_requested.connect(self.apply_blur)
+
+        self.control_panel.draw_mode_toggled.connect(self.set_draw_mode)
+        self.control_panel.draw_brush_changed.connect(self.update_draw_brush)
+        self.control_panel.draw_apply_requested.connect(self.apply_drawing)
+        self.control_panel.draw_cancel_requested.connect(self.cancel_drawing)
+
         self.control_panel.tool_list.currentTextChanged.connect(
-            lambda _: self._sync_crop_mode()
+            lambda _: self._sync_interaction_modes()
         )
 
         self.statusBar().showMessage("Ready")
@@ -206,7 +215,8 @@ class MainWindow(QMainWindow):
         self.app_state.set_image(pixmap, file_path)
         self._display_current_image()
         self.control_panel.set_resize_source_dimensions(pixmap.width(), pixmap.height())
-        self._sync_crop_mode()
+        self.update_draw_brush(8, self.control_panel._draw_color)
+        self._sync_interaction_modes()
 
         file_name = Path(file_path).name
         self.statusBar().showMessage(f"Loaded: {file_name}", 3000)
@@ -223,6 +233,7 @@ class MainWindow(QMainWindow):
 
     def clear_image(self) -> None:
         self.cancel_crop()
+        self.cancel_drawing()
         self.app_state.clear()
         self.image_viewer.clear_image()
         self._update_action_states()
@@ -265,7 +276,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.set_image(pixmap)
         self.control_panel.set_resize_source_dimensions(pixmap.width(), pixmap.height())
         self._update_action_states()
-        self._sync_crop_mode()
+        self._sync_interaction_modes()
         self.statusBar().showMessage("Undo", 2000)
         self.logger.info("Undo action")
 
@@ -277,7 +288,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.set_image(pixmap)
         self.control_panel.set_resize_source_dimensions(pixmap.width(), pixmap.height())
         self._update_action_states()
-        self._sync_crop_mode()
+        self._sync_interaction_modes()
         self.statusBar().showMessage("Redo", 2000)
         self.logger.info("Redo action")
 
@@ -289,7 +300,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.set_image(pixmap)
         self.control_panel.set_resize_source_dimensions(pixmap.width(), pixmap.height())
         self._update_action_states()
-        self._sync_crop_mode()
+        self._sync_interaction_modes()
         self.statusBar().showMessage("Reset to original", 2000)
         self.logger.info("Reset image to original")
 
@@ -314,7 +325,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.set_image(resized)
         self.control_panel.set_resize_source_dimensions(resized.width(), resized.height())
         self._update_action_states()
-        self._sync_crop_mode()
+        self._sync_interaction_modes()
 
         self.statusBar().showMessage(
             (
@@ -353,7 +364,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.set_image(rotated)
         self.control_panel.set_resize_source_dimensions(rotated.width(), rotated.height())
         self._update_action_states()
-        self._sync_crop_mode()
+        self._sync_interaction_modes()
 
         self.statusBar().showMessage(
             (
@@ -391,7 +402,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.set_image(flipped)
         self.control_panel.set_resize_source_dimensions(flipped.width(), flipped.height())
         self._update_action_states()
-        self._sync_crop_mode()
+        self._sync_interaction_modes()
 
         self.statusBar().showMessage(f"Flipped image: {direction}", 3000)
         self.logger.info("Flipped image: %s", direction)
@@ -420,7 +431,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.set_image(cropped)
         self.control_panel.set_resize_source_dimensions(cropped.width(), cropped.height())
         self._update_action_states()
-        self._sync_crop_mode()
+        self._sync_interaction_modes()
 
         self.statusBar().showMessage(
             f"Cropped image to {cropped.width()}×{cropped.height()}",
@@ -433,9 +444,6 @@ class MainWindow(QMainWindow):
             width,
             height,
         )
-
-        if self.control_panel.current_tool_name() == "Crop":
-            self.image_viewer.set_crop_mode(True)
 
     def apply_brightness_contrast(self, brightness: int, contrast: int) -> None:
         if not self.app_state.has_image():
@@ -459,7 +467,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.set_image(adjusted)
         self.control_panel.set_resize_source_dimensions(adjusted.width(), adjusted.height())
         self._update_action_states()
-        self._sync_crop_mode()
+        self._sync_interaction_modes()
 
         self.statusBar().showMessage(
             f"Applied brightness={brightness}, contrast={contrast}",
@@ -489,7 +497,7 @@ class MainWindow(QMainWindow):
         self.image_viewer.set_image(blurred)
         self.control_panel.set_resize_source_dimensions(blurred.width(), blurred.height())
         self._update_action_states()
-        self._sync_crop_mode()
+        self._sync_interaction_modes()
 
         kernel_size = 0 if strength <= 0 else 2 * strength + 1
         self.statusBar().showMessage(
@@ -502,26 +510,93 @@ class MainWindow(QMainWindow):
             kernel_size,
         )
 
+    def set_draw_mode(self, enabled: bool) -> None:
+        if not self.app_state.has_image():
+            self.control_panel.set_draw_mode_state(False)
+            return
+
+        self.image_viewer.set_draw_mode(enabled)
+        if enabled:
+            self.update_draw_brush(
+                self.control_panel.draw_size_slider.value(),
+                self.control_panel._draw_color,
+            )
+            self.statusBar().showMessage("Draw mode enabled", 2000)
+        else:
+            self.statusBar().showMessage("Draw mode disabled", 2000)
+
+    def update_draw_brush(self, size, color) -> None:
+        self.image_viewer.set_draw_brush(size, color)
+
+    def apply_drawing(self) -> None:
+        if not self.image_viewer.is_draw_mode():
+            QMessageBox.warning(self, "Draw Mode", "Start drawing first.")
+            return
+
+        drawn_pixmap = self.image_viewer.commit_drawing()
+        if drawn_pixmap is None or drawn_pixmap.isNull():
+            QMessageBox.warning(self, "Drawing Failed", "No drawing to apply.")
+            return
+
+        self.app_state.apply_new_current(drawn_pixmap)
+        self.image_viewer.set_image(drawn_pixmap)
+        self.control_panel.set_resize_source_dimensions(
+            drawn_pixmap.width(), drawn_pixmap.height()
+        )
+        self._update_action_states()
+
+        self.control_panel.set_draw_mode_state(False)
+        self.image_viewer.set_draw_mode(False)
+        self._sync_interaction_modes()
+
+        self.statusBar().showMessage("Applied drawing", 3000)
+        self.logger.info("Applied drawing to image")
+
+    def cancel_drawing(self) -> None:
+        self.image_viewer.cancel_drawing()
+        self.control_panel.set_draw_mode_state(False)
+        self.image_viewer.set_draw_mode(False)
+        self._sync_interaction_modes()
+        self.statusBar().showMessage("Drawing cancelled", 2000)
+
     def cancel_crop(self) -> None:
         self.image_viewer.set_crop_mode(False)
         self.control_panel.set_crop_selection_info(False)
-
-        if self.control_panel.current_tool_name() == "Crop":
-            self.image_viewer.set_crop_mode(True)
+        self._sync_interaction_modes()
 
     def on_module_selected(self, module_name: str) -> None:
         self.control_panel.show_module(module_name)
-        self._sync_crop_mode()
+        self._sync_interaction_modes()
         self.statusBar().showMessage(f"Selected module: {module_name}", 2000)
         self.logger.info("Selected module: %s", module_name)
 
-    def _sync_crop_mode(self) -> None:
-        enable_crop = (
-            self.control_panel.current_module == "Edit"
-            and self.control_panel.current_tool_name() == "Crop"
-            and self.app_state.has_image()
+    def _sync_interaction_modes(self) -> None:
+        current_tool = self.control_panel.current_tool_name()
+        is_edit = self.control_panel.current_module == "Edit"
+        has_image = self.app_state.has_image()
+
+        enable_crop = is_edit and current_tool == "Crop" and has_image
+        enable_draw = (
+            is_edit
+            and current_tool == "Draw"
+            and has_image
+            and self.control_panel.draw_toggle_button.isChecked()
         )
-        self.image_viewer.set_crop_mode(enable_crop)
+
+        if enable_draw:
+            self.image_viewer.set_crop_mode(False)
+            self.image_viewer.set_draw_mode(True)
+            self.update_draw_brush(
+                self.control_panel.draw_size_slider.value(),
+                self.control_panel._draw_color,
+            )
+        else:
+            self.image_viewer.set_draw_mode(False)
+
+        if enable_crop:
+            self.image_viewer.set_crop_mode(True)
+        else:
+            self.image_viewer.set_crop_mode(False)
 
     def _update_zoom_label(self, zoom_factor: float) -> None:
         percent = round(zoom_factor * 100)

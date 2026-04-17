@@ -1,10 +1,11 @@
-from PySide6.QtCore import Qt, Signal, QRectF, QRect, QPoint
+from PySide6.QtCore import Qt, Signal, QRectF, QRect, QPoint, QPointF
 from PySide6.QtGui import (
     QPixmap,
     QDragEnterEvent,
     QDropEvent,
     QColor,
     QPainter,
+    QPen,
 )
 from PySide6.QtWidgets import (
     QGraphicsView,
@@ -22,6 +23,7 @@ class ImageViewer(QGraphicsView):
     zoom_changed = Signal(float)
     image_loaded = Signal(int, int)
     crop_selection_changed = Signal(bool, int, int, int, int)
+    draw_session_changed = Signal(bool)
 
     def __init__(self) -> None:
         super().__init__()
@@ -42,6 +44,14 @@ class ImageViewer(QGraphicsView):
         self._crop_origin = QPoint()
         self._crop_rubber_band = QRubberBand(QRubberBand.Shape.Rectangle, self.viewport())
         self._crop_scene_rect = QRectF()
+
+        self._draw_mode = False
+        self._draw_brush_size = 8
+        self._draw_color = QColor("#ff0000")
+        self._draw_active = False
+        self._draw_last_point = QPointF()
+        self._draw_base_pixmap = QPixmap()
+        self._draw_working_pixmap = QPixmap()
 
         self.setRenderHints(QPainter.RenderHint.SmoothPixmapTransform)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -86,6 +96,7 @@ class ImageViewer(QGraphicsView):
         self._has_image = True
         self._placeholder_text.setVisible(False)
         self.clear_crop_selection()
+        self.cancel_drawing()
 
         self.fit_to_view()
         self.image_loaded.emit(pixmap.width(), pixmap.height())
@@ -99,6 +110,7 @@ class ImageViewer(QGraphicsView):
         self._placeholder_text.setVisible(True)
         self._update_placeholder_position()
         self.clear_crop_selection()
+        self.cancel_drawing()
 
         self.image_cleared.emit()
         self.zoom_changed.emit(self._zoom_factor)
@@ -157,7 +169,8 @@ class ImageViewer(QGraphicsView):
         self._crop_mode = enabled
         if not enabled:
             self.clear_crop_selection()
-            self.setCursor(Qt.CursorShape.ArrowCursor)
+            if not self._draw_mode:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
         else:
             self.setCursor(Qt.CursorShape.CrossCursor)
 
@@ -167,7 +180,11 @@ class ImageViewer(QGraphicsView):
         self.crop_selection_changed.emit(False, 0, 0, 0, 0)
 
     def has_crop_selection(self) -> bool:
-        return not self._crop_scene_rect.isNull() and self._crop_scene_rect.width() > 0 and self._crop_scene_rect.height() > 0
+        return (
+            not self._crop_scene_rect.isNull()
+            and self._crop_scene_rect.width() > 0
+            and self._crop_scene_rect.height() > 0
+        )
 
     def get_crop_rect(self) -> tuple[int, int, int, int] | None:
         if not self.has_crop_selection():
@@ -184,8 +201,83 @@ class ImageViewer(QGraphicsView):
 
         return x, y, width, height
 
+    def set_draw_mode(self, enabled: bool) -> None:
+        self._draw_mode = enabled
+        self._draw_active = False
+
+        if enabled and self._has_image:
+            current_pixmap = self._pixmap_item.pixmap()
+            self._draw_base_pixmap = current_pixmap.copy()
+            self._draw_working_pixmap = current_pixmap.copy()
+            self.setCursor(Qt.CursorShape.CrossCursor)
+        else:
+            self._draw_base_pixmap = QPixmap()
+            self._draw_working_pixmap = QPixmap()
+            if not self._crop_mode:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+
+        self.draw_session_changed.emit(enabled)
+
+    def set_draw_brush(self, size: int, color: QColor) -> None:
+        self._draw_brush_size = max(1, size)
+        self._draw_color = color
+
+    def is_draw_mode(self) -> bool:
+        return self._draw_mode
+
+    def has_drawing_session(self) -> bool:
+        return self._draw_mode and not self._draw_working_pixmap.isNull()
+
+    def get_drawn_pixmap(self) -> QPixmap | None:
+        if self._draw_working_pixmap.isNull():
+            return None
+        return self._draw_working_pixmap.copy()
+
+    def cancel_drawing(self) -> None:
+        self._draw_active = False
+        if not self._draw_mode:
+            self._draw_base_pixmap = QPixmap()
+            self._draw_working_pixmap = QPixmap()
+            return
+
+        if not self._draw_base_pixmap.isNull():
+            self._draw_working_pixmap = self._draw_base_pixmap.copy()
+            self._pixmap_item.setPixmap(self._draw_base_pixmap)
+
+    def commit_drawing(self) -> QPixmap | None:
+        if self._draw_working_pixmap.isNull():
+            return None
+        committed = self._draw_working_pixmap.copy()
+        self._draw_base_pixmap = committed.copy()
+        return committed
+
+    def _scene_pos_to_image_point(self, scene_pos: QPointF) -> QPointF:
+        rect = self._pixmap_item.boundingRect()
+        x = min(max(scene_pos.x(), rect.left()), rect.right())
+        y = min(max(scene_pos.y(), rect.top()), rect.bottom())
+        return QPointF(x, y)
+
+    def _draw_line_to(self, current_point: QPointF) -> None:
+        if self._draw_working_pixmap.isNull():
+            return
+
+        painter = QPainter(self._draw_working_pixmap)
+        pen = QPen(
+            self._draw_color,
+            self._draw_brush_size,
+            Qt.PenStyle.SolidLine,
+            Qt.PenCapStyle.RoundCap,
+            Qt.PenJoinStyle.RoundJoin,
+        )
+        painter.setPen(pen)
+        painter.drawLine(self._draw_last_point, current_point)
+        painter.end()
+
+        self._pixmap_item.setPixmap(self._draw_working_pixmap)
+        self._draw_last_point = current_point
+
     def wheelEvent(self, event) -> None:
-        if not self._has_image or self._crop_mode:
+        if not self._has_image or self._crop_mode or self._draw_mode:
             return super().wheelEvent(event)
 
         if event.angleDelta().y() > 0:
@@ -194,6 +286,14 @@ class ImageViewer(QGraphicsView):
             self.zoom_out()
 
     def mousePressEvent(self, event) -> None:
+        if self._draw_mode and self._has_image and event.button() == Qt.MouseButton.LeftButton:
+            scene_point = self.mapToScene(event.position().toPoint())
+            image_point = self._scene_pos_to_image_point(scene_point)
+            self._draw_active = True
+            self._draw_last_point = image_point
+            self._draw_line_to(image_point)
+            return
+
         if self._crop_mode and self._has_image and event.button() == Qt.MouseButton.LeftButton:
             self._crop_origin = event.position().toPoint()
             self._crop_rubber_band.setGeometry(QRect(self._crop_origin, self._crop_origin))
@@ -208,6 +308,12 @@ class ImageViewer(QGraphicsView):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
+        if self._draw_mode and self._draw_active:
+            scene_point = self.mapToScene(event.position().toPoint())
+            image_point = self._scene_pos_to_image_point(scene_point)
+            self._draw_line_to(image_point)
+            return
+
         if self._crop_mode and self._crop_rubber_band.isVisible():
             current_pos = event.position().toPoint()
             rect = QRect(self._crop_origin, current_pos).normalized()
@@ -217,6 +323,10 @@ class ImageViewer(QGraphicsView):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
+        if self._draw_mode and event.button() == Qt.MouseButton.LeftButton:
+            self._draw_active = False
+            return
+
         if self._crop_mode and event.button() == Qt.MouseButton.LeftButton:
             rubber_rect = self._crop_rubber_band.geometry()
             if rubber_rect.width() > 1 and rubber_rect.height() > 1:

@@ -1,4 +1,5 @@
 from PySide6.QtCore import Signal, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -14,6 +15,8 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QDoubleSpinBox,
     QSlider,
+    QColorDialog,
+    QFrame,
 )
 
 
@@ -26,10 +29,16 @@ class ControlPanel(QWidget):
     brightness_contrast_requested = Signal(int, int)
     blur_requested = Signal(int)
 
+    draw_mode_toggled = Signal(bool)
+    draw_brush_changed = Signal(int, QColor)
+    draw_apply_requested = Signal()
+    draw_cancel_requested = Signal()
+
     def __init__(self) -> None:
         super().__init__()
 
         self.current_module = "Edit"
+        self._draw_color = QColor("#ff0000")
 
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(10, 10, 10, 10)
@@ -52,6 +61,7 @@ class ControlPanel(QWidget):
         self.crop_page = self._build_crop_page()
         self.brightness_contrast_page = self._build_brightness_contrast_page()
         self.blur_page = self._build_blur_page()
+        self.draw_page = self._build_draw_page()
 
         self.stack.addWidget(self.empty_page)                 # 0
         self.stack.addWidget(self.resize_page)                # 1
@@ -60,6 +70,7 @@ class ControlPanel(QWidget):
         self.stack.addWidget(self.crop_page)                  # 4
         self.stack.addWidget(self.brightness_contrast_page)   # 5
         self.stack.addWidget(self.blur_page)                  # 6
+        self.stack.addWidget(self.draw_page)                  # 7
 
         self.layout.addWidget(self.title)
         self.layout.addWidget(self.description)
@@ -365,6 +376,71 @@ class ControlPanel(QWidget):
         page.setLayout(layout)
         return page
 
+    def _build_draw_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+
+        description = QLabel(
+            "Draw directly on the image using a brush. "
+            "Choose size and color, then start drawing."
+        )
+        description.setWordWrap(True)
+
+        brush_size_label = QLabel("Brush Size")
+        self.draw_size_slider = QSlider(Qt.Orientation.Horizontal)
+        self.draw_size_slider.setRange(1, 100)
+        self.draw_size_slider.setValue(8)
+        self.draw_size_value_label = QLabel("8")
+        self.draw_size_slider.valueChanged.connect(
+            lambda value: self.draw_size_value_label.setText(str(value))
+        )
+        self.draw_size_slider.valueChanged.connect(self._emit_draw_brush_changed)
+
+        draw_size_row = QHBoxLayout()
+        draw_size_row.addWidget(self.draw_size_slider)
+        draw_size_row.addWidget(self.draw_size_value_label)
+
+        color_label = QLabel("Brush Color")
+        self.draw_color_preview = QFrame()
+        self.draw_color_preview.setFixedHeight(28)
+        self.draw_color_preview.setStyleSheet(
+            "background-color: #ff0000; border: 1px solid #888;"
+        )
+
+        self.draw_color_button = QPushButton("Choose Color")
+        self.draw_color_button.clicked.connect(self._choose_draw_color)
+
+        color_row = QHBoxLayout()
+        color_row.addWidget(self.draw_color_preview)
+        color_row.addWidget(self.draw_color_button)
+
+        self.draw_toggle_button = QPushButton("Start Drawing")
+        self.draw_toggle_button.setCheckable(True)
+        self.draw_toggle_button.toggled.connect(self._on_draw_toggled)
+
+        action_row = QHBoxLayout()
+        self.draw_apply_button = QPushButton("Apply Drawing")
+        self.draw_cancel_button = QPushButton("Cancel Drawing")
+
+        self.draw_apply_button.clicked.connect(self.draw_apply_requested.emit)
+        self.draw_cancel_button.clicked.connect(self.draw_cancel_requested.emit)
+
+        action_row.addWidget(self.draw_apply_button)
+        action_row.addWidget(self.draw_cancel_button)
+
+        layout.addWidget(description)
+        layout.addWidget(brush_size_label)
+        layout.addLayout(draw_size_row)
+        layout.addWidget(color_label)
+        layout.addLayout(color_row)
+        layout.addWidget(self.draw_toggle_button)
+        layout.addLayout(action_row)
+        layout.addStretch()
+
+        return_widget = page
+        return_widget.setLayout(layout)
+        return return_widget
+
     def show_module(self, module_name: str) -> None:
         self.current_module = module_name
         self.title.setText(module_name)
@@ -380,7 +456,7 @@ class ControlPanel(QWidget):
                 "Crop",
                 "Brightness / Contrast",
                 "Blur",
-                "Sharpen",
+                "Draw",
             ]
         elif module_name == "Analysis":
             self.description.setText("Image analysis and metadata tools.")
@@ -465,6 +541,12 @@ class ControlPanel(QWidget):
             self.crop_selection_info.setText("No crop selected")
             self.crop_apply_button.setEnabled(False)
 
+    def set_draw_mode_state(self, enabled: bool) -> None:
+        self.draw_toggle_button.blockSignals(True)
+        self.draw_toggle_button.setChecked(enabled)
+        self.draw_toggle_button.setText("Stop Drawing" if enabled else "Start Drawing")
+        self.draw_toggle_button.blockSignals(False)
+
     def current_tool_name(self) -> str:
         item = self.tool_list.currentItem()
         return item.text() if item else ""
@@ -486,6 +568,8 @@ class ControlPanel(QWidget):
             self.stack.setCurrentIndex(5)
         elif tool_name == "Blur":
             self.stack.setCurrentIndex(6)
+        elif tool_name == "Draw":
+            self.stack.setCurrentIndex(7)
         else:
             self.stack.setCurrentIndex(0)
 
@@ -555,3 +639,21 @@ class ControlPanel(QWidget):
 
     def _reset_blur_fields(self) -> None:
         self.blur_slider.setValue(0)
+
+    def _choose_draw_color(self) -> None:
+        color = QColorDialog.getColor(self._draw_color, self, "Select Brush Color")
+        if not color.isValid():
+            return
+
+        self._draw_color = color
+        self.draw_color_preview.setStyleSheet(
+            f"background-color: {color.name()}; border: 1px solid #888;"
+        )
+        self._emit_draw_brush_changed()
+
+    def _emit_draw_brush_changed(self) -> None:
+        self.draw_brush_changed.emit(self.draw_size_slider.value(), self._draw_color)
+
+    def _on_draw_toggled(self, checked: bool) -> None:
+        self.draw_toggle_button.setText("Stop Drawing" if checked else "Start Drawing")
+        self.draw_mode_toggled.emit(checked)
