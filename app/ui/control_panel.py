@@ -20,6 +20,8 @@ class ControlPanel(QWidget):
     resize_requested = Signal(int, int, str)
     rotate_requested = Signal(float, str, bool)
     flip_requested = Signal(str)
+    crop_apply_requested = Signal()
+    crop_cancel_requested = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -44,11 +46,13 @@ class ControlPanel(QWidget):
         self.resize_page = self._build_resize_page()
         self.rotate_page = self._build_rotate_page()
         self.flip_page = self._build_flip_page()
+        self.crop_page = self._build_crop_page()
 
         self.stack.addWidget(self.empty_page)   # 0
         self.stack.addWidget(self.resize_page)  # 1
         self.stack.addWidget(self.rotate_page)  # 2
         self.stack.addWidget(self.flip_page)    # 3
+        self.stack.addWidget(self.crop_page)    # 4
 
         self.layout.addWidget(self.title)
         self.layout.addWidget(self.description)
@@ -217,6 +221,38 @@ class ControlPanel(QWidget):
         page.setLayout(layout)
         return page
 
+    def _build_crop_page(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout()
+
+        self.crop_status_label = QLabel(
+            "Drag a rectangle on the image to choose the crop area."
+        )
+        self.crop_status_label.setWordWrap(True)
+
+        self.crop_selection_info = QLabel("No crop selected")
+        self.crop_selection_info.setWordWrap(True)
+
+        action_row = QHBoxLayout()
+        self.crop_apply_button = QPushButton("Apply Crop")
+        self.crop_cancel_button = QPushButton("Cancel Crop")
+
+        self.crop_apply_button.setEnabled(False)
+
+        self.crop_apply_button.clicked.connect(self.crop_apply_requested.emit)
+        self.crop_cancel_button.clicked.connect(self.crop_cancel_requested.emit)
+
+        action_row.addWidget(self.crop_apply_button)
+        action_row.addWidget(self.crop_cancel_button)
+
+        layout.addWidget(self.crop_status_label)
+        layout.addWidget(self.crop_selection_info)
+        layout.addLayout(action_row)
+        layout.addStretch()
+
+        page.setLayout(layout)
+        return page
+
     def show_module(self, module_name: str) -> None:
         self.current_module = module_name
         self.title.setText(module_name)
@@ -300,6 +336,23 @@ class ControlPanel(QWidget):
         self.resize_width_spin.blockSignals(False)
         self.resize_height_spin.blockSignals(False)
 
+    def set_crop_selection_info(
+        self,
+        has_selection: bool,
+        x: int = 0,
+        y: int = 0,
+        width: int = 0,
+        height: int = 0,
+    ) -> None:
+        if has_selection:
+            self.crop_selection_info.setText(
+                f"Crop: x={x}, y={y}, width={width}, height={height}"
+            )
+            self.crop_apply_button.setEnabled(True)
+        else:
+            self.crop_selection_info.setText("No crop selected")
+            self.crop_apply_button.setEnabled(False)
+
     def _on_tool_changed(self, tool_name: str) -> None:
         if self.current_module != "Edit":
             self.stack.setCurrentIndex(0)
@@ -311,8 +364,14 @@ class ControlPanel(QWidget):
             self.stack.setCurrentIndex(2)
         elif tool_name == "Flip":
             self.stack.setCurrentIndex(3)
+        elif tool_name == "Crop":
+            self.stack.setCurrentIndex(4)
         else:
             self.stack.setCurrentIndex(0)
+
+    def current_tool_name(self) -> str:
+        item = self.tool_list.currentItem()
+        return item.text() if item else ""
 
     def _on_width_changed(self, new_width: int) -> None:
         if not self.keep_aspect_checkbox.isChecked():

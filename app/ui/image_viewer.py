@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, Signal, QRectF
+from PySide6.QtCore import Qt, Signal, QRectF, QRect, QPoint
 from PySide6.QtGui import (
     QPixmap,
     QDragEnterEvent,
@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QGraphicsPixmapItem,
     QFrame,
     QGraphicsTextItem,
+    QRubberBand,
 )
 
 
@@ -20,6 +21,7 @@ class ImageViewer(QGraphicsView):
     image_cleared = Signal()
     zoom_changed = Signal(float)
     image_loaded = Signal(int, int)
+    crop_selection_changed = Signal(bool, int, int, int, int)
 
     def __init__(self) -> None:
         super().__init__()
@@ -35,6 +37,11 @@ class ImageViewer(QGraphicsView):
         self._has_image = False
         self._zoom_factor = 1.0
         self._is_panning = False
+
+        self._crop_mode = False
+        self._crop_origin = QPoint()
+        self._crop_rubber_band = QRubberBand(QRubberBand.Shape.Rectangle, self.viewport())
+        self._crop_scene_rect = QRectF()
 
         self.setRenderHints(QPainter.RenderHint.SmoothPixmapTransform)
         self.setFrameShape(QFrame.Shape.NoFrame)
@@ -78,6 +85,7 @@ class ImageViewer(QGraphicsView):
         self._scene.setSceneRect(QRectF(self._pixmap_item.boundingRect()))
         self._has_image = True
         self._placeholder_text.setVisible(False)
+        self.clear_crop_selection()
 
         self.fit_to_view()
         self.image_loaded.emit(pixmap.width(), pixmap.height())
@@ -90,6 +98,7 @@ class ImageViewer(QGraphicsView):
         self.resetTransform()
         self._placeholder_text.setVisible(True)
         self._update_placeholder_position()
+        self.clear_crop_selection()
 
         self.image_cleared.emit()
         self.zoom_changed.emit(self._zoom_factor)
@@ -144,8 +153,39 @@ class ImageViewer(QGraphicsView):
         self._zoom_factor = 1.0
         self.zoom_changed.emit(self._zoom_factor)
 
+    def set_crop_mode(self, enabled: bool) -> None:
+        self._crop_mode = enabled
+        if not enabled:
+            self.clear_crop_selection()
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+        else:
+            self.setCursor(Qt.CursorShape.CrossCursor)
+
+    def clear_crop_selection(self) -> None:
+        self._crop_rubber_band.hide()
+        self._crop_scene_rect = QRectF()
+        self.crop_selection_changed.emit(False, 0, 0, 0, 0)
+
+    def has_crop_selection(self) -> bool:
+        return not self._crop_scene_rect.isNull() and self._crop_scene_rect.width() > 0 and self._crop_scene_rect.height() > 0
+
+    def get_crop_rect(self) -> tuple[int, int, int, int] | None:
+        if not self.has_crop_selection():
+            return None
+
+        rect = self._crop_scene_rect.intersected(self._pixmap_item.boundingRect())
+        if rect.isNull() or rect.width() <= 0 or rect.height() <= 0:
+            return None
+
+        x = max(0, round(rect.x()))
+        y = max(0, round(rect.y()))
+        width = max(1, round(rect.width()))
+        height = max(1, round(rect.height()))
+
+        return x, y, width, height
+
     def wheelEvent(self, event) -> None:
-        if not self._has_image:
+        if not self._has_image or self._crop_mode:
             return super().wheelEvent(event)
 
         if event.angleDelta().y() > 0:
@@ -154,17 +194,53 @@ class ImageViewer(QGraphicsView):
             self.zoom_out()
 
     def mousePressEvent(self, event) -> None:
+        if self._crop_mode and self._has_image and event.button() == Qt.MouseButton.LeftButton:
+            self._crop_origin = event.position().toPoint()
+            self._crop_rubber_band.setGeometry(QRect(self._crop_origin, self._crop_origin))
+            self._crop_rubber_band.show()
+            return
+
         if event.button() == Qt.MouseButton.LeftButton and self._has_image:
             self._is_panning = True
             self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
+
         super().mousePressEvent(event)
 
+    def mouseMoveEvent(self, event) -> None:
+        if self._crop_mode and self._crop_rubber_band.isVisible():
+            current_pos = event.position().toPoint()
+            rect = QRect(self._crop_origin, current_pos).normalized()
+            self._crop_rubber_band.setGeometry(rect)
+            return
+
+        super().mouseMoveEvent(event)
+
     def mouseReleaseEvent(self, event) -> None:
+        if self._crop_mode and event.button() == Qt.MouseButton.LeftButton:
+            rubber_rect = self._crop_rubber_band.geometry()
+            if rubber_rect.width() > 1 and rubber_rect.height() > 1:
+                top_left_scene = self.mapToScene(rubber_rect.topLeft())
+                bottom_right_scene = self.mapToScene(rubber_rect.bottomRight())
+
+                selection_rect = QRectF(top_left_scene, bottom_right_scene).normalized()
+                selection_rect = selection_rect.intersected(self._pixmap_item.boundingRect())
+                self._crop_scene_rect = selection_rect
+
+                crop = self.get_crop_rect()
+                if crop is not None:
+                    self.crop_selection_changed.emit(True, *crop)
+                else:
+                    self.clear_crop_selection()
+            else:
+                self.clear_crop_selection()
+            return
+
         if event.button() == Qt.MouseButton.LeftButton and self._is_panning:
             self._is_panning = False
             self.setDragMode(QGraphicsView.DragMode.NoDrag)
             self.setCursor(Qt.CursorShape.ArrowCursor)
+
         super().mouseReleaseEvent(event)
 
     def resizeEvent(self, event) -> None:

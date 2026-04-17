@@ -19,6 +19,7 @@ from app.constants import (
     MIN_WINDOW_HEIGHT,
 )
 from app.logger import setup_logger
+from app.process.edit.crop import crop_pixmap
 from app.process.edit.flip import flip_pixmap
 from app.process.edit.resize import resize_pixmap
 from app.process.edit.rotate import rotate_pixmap
@@ -63,11 +64,17 @@ class MainWindow(QMainWindow):
         self.image_viewer.zoom_changed.connect(self._update_zoom_label)
         self.image_viewer.image_loaded.connect(self._update_image_info)
         self.image_viewer.image_cleared.connect(self._clear_image_info)
+        self.image_viewer.crop_selection_changed.connect(
+            self.control_panel.set_crop_selection_info
+        )
 
         self.sidebar.module_selected.connect(self.on_module_selected)
         self.control_panel.resize_requested.connect(self.apply_resize)
         self.control_panel.rotate_requested.connect(self.apply_rotate)
         self.control_panel.flip_requested.connect(self.apply_flip)
+        self.control_panel.crop_apply_requested.connect(self.apply_crop)
+        self.control_panel.crop_cancel_requested.connect(self.cancel_crop)
+        self.control_panel.tool_list.currentTextChanged.connect(lambda _: self._sync_crop_mode())
 
         self.statusBar().showMessage("Ready")
 
@@ -188,6 +195,7 @@ class MainWindow(QMainWindow):
 
         self.app_state.set_image(pixmap, file_path)
         self._display_current_image()
+        self._sync_crop_mode()
         self.control_panel.set_resize_source_dimensions(pixmap.width(), pixmap.height())
 
         file_name = Path(file_path).name
@@ -204,6 +212,7 @@ class MainWindow(QMainWindow):
         self._update_action_states()
 
     def clear_image(self) -> None:
+        self.cancel_crop()
         self.app_state.clear()
         self.image_viewer.clear_image()
         self._update_action_states()
@@ -371,10 +380,66 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Flipped image: {direction}", 3000)
         self.logger.info("Flipped image: %s", direction)
 
+    def apply_crop(self) -> None:
+        if not self.app_state.has_image():
+            QMessageBox.warning(self, "No Image", "Load an image first.")
+            return
+
+        crop_rect = self.image_viewer.get_crop_rect()
+        if crop_rect is None:
+            QMessageBox.warning(self, "No Selection", "Draw a crop rectangle first.")
+            return
+
+        current = self.app_state.current_pixmap
+        if current is None or current.isNull():
+            return
+
+        x, y, width, height = crop_rect
+        cropped = crop_pixmap(current, x, y, width, height)
+        if cropped.isNull():
+            QMessageBox.warning(self, "Crop Failed", "Failed to crop image.")
+            return
+
+        self.app_state.apply_new_current(cropped)
+        self.image_viewer.set_image(cropped)
+        self.control_panel.set_resize_source_dimensions(cropped.width(), cropped.height())
+        self._update_action_states()
+
+        self.statusBar().showMessage(
+            f"Cropped image to {cropped.width()}×{cropped.height()}",
+            3000,
+        )
+        self.logger.info(
+            "Cropped image at x=%s y=%s width=%s height=%s",
+            x,
+            y,
+            width,
+            height,
+        )
+
+        if self.control_panel.current_tool_name() == "Crop":
+            self.image_viewer.set_crop_mode(True)
+
+    def cancel_crop(self) -> None:
+        self.image_viewer.set_crop_mode(False)
+        self.control_panel.set_crop_selection_info(False)
+
+        if self.control_panel.current_tool_name() == "Crop":
+            self.image_viewer.set_crop_mode(True)
+
     def on_module_selected(self, module_name: str) -> None:
         self.control_panel.show_module(module_name)
+        self._sync_crop_mode()
         self.statusBar().showMessage(f"Selected module: {module_name}", 2000)
         self.logger.info("Selected module: %s", module_name)
+
+    def _sync_crop_mode(self) -> None:
+        enable_crop = (
+            self.control_panel.current_module == "Edit"
+            and self.control_panel.current_tool_name() == "Crop"
+            and self.app_state.has_image()
+        )
+        self.image_viewer.set_crop_mode(enable_crop)
 
     def _update_zoom_label(self, zoom_factor: float) -> None:
         percent = round(zoom_factor * 100)
